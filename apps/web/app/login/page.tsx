@@ -1,0 +1,20 @@
+import { LoginForm } from "@/components/auth/login-form";
+
+export default function LoginPage() {
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-[--nav-bg]">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-10">
+          <h1 className="text-5xl font-black text-white tracking-tight" style={{ fontFamily: "'Bebas Neue', sans-serif" }}>
+            INNEX
+          </h1>
+          <p className="text-[--text-nav-muted] mt-3 text-sm">个人知识内化助手</p>
+        </div>
+        <div className="bg-white rounded-xl p-8 shadow-lg">
+          <h2 className="text-lg font-semibold mb-6 text-center">登录</h2>
+          <LoginForm />
+        </div>
+      </div>
+    </div>
+  );
+}

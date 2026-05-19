@@ -1,0 +1,77 @@
+"use client";
+
+import { useCaptureItems } from "@/hooks/use-capture-items";
+import { QuickCapture } from "@/components/inbox/quick-capture";
+import { InboxToolbar } from "@/components/inbox/inbox-toolbar";
+import { InboxTable } from "@/components/inbox/inbox-table";
+import { InboxDrawer } from "@/components/inbox/inbox-drawer";
+import { useState } from "react";
+import type { CaptureItem } from "@/lib/supabase/types";
+
+export function InboxPage() {
+  const {
+    items,
+    loading,
+    statusFilter,
+    setStatusFilter,
+    search,
+    setSearch,
+    addItem,
+    updateItem,
+    deleteItem,
+  } = useCaptureItems();
+
+  const [selectedItem, setSelectedItem] = useState<CaptureItem | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  function openDrawer(item: CaptureItem) {
+    setSelectedItem(item);
+    setDrawerOpen(true);
+  }
+
+  function closeDrawer() {
+    setDrawerOpen(false);
+    setTimeout(() => setSelectedItem(null), 200);
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-8 pt-10 pb-6 shrink-0">
+        <h1 className="text-[28px] font-bold text-[--ink] tracking-tight">
+          收录箱
+        </h1>
+        <p className="text-sm text-[--muted] mt-1">快速捕获一切值得内化的内容</p>
+      </div>
+
+      <div className="px-8 pb-4 shrink-0">
+        <QuickCapture onAdd={addItem} />
+      </div>
+
+      <div className="px-8 pb-3 shrink-0">
+        <InboxToolbar
+          statusFilter={statusFilter}
+          onStatusChange={setStatusFilter}
+          search={search}
+          onSearchChange={setSearch}
+        />
+      </div>
+
+      <div className="flex-1 overflow-auto px-8 pb-8">
+        <InboxTable
+          items={items}
+          loading={loading}
+          onSelect={openDrawer}
+          onStatusChange={(id, status) => updateItem(id, { status })}
+        />
+      </div>
+
+      <InboxDrawer
+        item={selectedItem}
+        open={drawerOpen}
+        onClose={closeDrawer}
+        onUpdate={updateItem}
+        onDelete={deleteItem}
+      />
+    </div>
+  );
+}
