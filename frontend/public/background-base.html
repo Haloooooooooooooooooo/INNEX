@@ -1,0 +1,3138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>INNEX — 个人知识内化助手</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&family=Bebas+Neue&display=swap');
+
+:root {
+  --bg-dark: #0B0F0E;
+  --bg-deep: #111815;
+  --bg-nav: #0B0F0E;
+  --bg-panel: #EFEAE2;
+  --bg-card: #F8F4ED;
+  --bg-input: #ffffff;
+  --accent: #F15A24;
+  --accent-hover: #d94a16;
+  --accent-dim: rgba(241,90,36,0.12);
+  --sun: #F6C449;
+  --paper: #EFEAE2;
+  --paper-light: #F8F4ED;
+  --ink: #111111;
+  --muted: #6F6B63;
+  --line: rgba(0,0,0,0.12);
+  --text-primary: #111111;
+  --text-secondary: #4e4a43;
+  --text-muted: #6F6B63;
+  --text-light: #c8ccc9;
+  --text-nav: #e0ddd8;
+  --text-nav-muted: #7a7e7c;
+  --border: rgba(255,255,255,0.06);
+  --border-light: rgba(0,0,0,0.1);
+  --border-medium: rgba(0,0,0,0.16);
+  --status-pending: #F15A24;
+  --status-waiting: #6b7280;
+  --status-done: #22c55e;
+  --status-fix: #ef4444;
+  --nav-width: 220px;
+  --topbar-height: 0px;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-display: 'Bebas Neue', sans-serif;
+  --font-body: 'Space Grotesk', sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--paper);
+  color: var(--text-primary);
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ===== TOPBAR ===== */
+.topbar {
+  height: 0;
+  background: transparent;
+  border-bottom: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 50;
+}
+
+.topbar-actions {
+  position: fixed;
+  top: 22px;
+  right: 22px;
+  z-index: 500;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.inbox-drawer-open .topbar-actions {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.topbar-btn {
+  width: 42px; height: 42px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(11,15,14,0.76);
+  color: #d8d3ca;
+  backdrop-filter: blur(10px);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-size: 14px;
+  position: relative;
+}
+.topbar-btn:hover { background: rgba(241,90,36,0.12); color: #fff; border-color: rgba(241,90,36,0.45); }
+.topbar-btn.active { color: var(--accent); border-color: rgba(241,90,36,0.4); }
+
+/* ===== APP LAYOUT ===== */
+.app-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ===== LEFT NAV ===== */
+.nav {
+  width: var(--nav-width);
+  background:
+    radial-gradient(circle at 100% 22%, rgba(241,90,36,0.16), transparent 30%),
+    linear-gradient(180deg, #101310 0%, #070a09 100%);
+  border-right: 1px solid rgba(255,255,255,0.08);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.nav-brand {
+  padding: 46px 30px 28px;
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-logo {
+  font-family: "Arial Black", "Segoe UI", sans-serif;
+  font-weight: 900;
+  font-size: 34px;
+  color: #fff;
+  letter-spacing: -1px;
+  transform: scaleX(0.94);
+  transform-origin: left center;
+}
+.nav-logo span { color: var(--accent); }
+
+.nav-sub {
+  font-size: 11px;
+  color: #b7b0a7;
+  letter-spacing: 0.03em;
+  margin-top: 14px;
+  line-height: 1.7;
+  font-weight: 400;
+}
+
+.nav-links {
+  flex: 1;
+  padding: 26px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 30px;
+  cursor: pointer;
+  transition: all 0.15s;
+  border-left: 4px solid transparent;
+  position: relative;
+}
+
+.nav-item:hover { background: rgba(255,255,255,0.045); }
+.nav-item.active {
+  background: linear-gradient(90deg, rgba(241,90,36,0.23), rgba(44,28,18,0.62), rgba(255,255,255,0.02));
+  border-left-color: var(--accent);
+}
+
+.nav-icon {
+  width: 22px; height: 22px;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+.nav-item.active .nav-icon { opacity: 1; }
+
+.nav-label {
+  display: flex;
+  flex-direction: column;
+}
+.nav-label-cn {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--text-nav-muted);
+}
+.nav-label-en {
+  font-size: 10px;
+  color: #77736d;
+  letter-spacing: 0.04em;
+  font-weight: 400;
+  text-transform: uppercase;
+}
+.nav-item.active .nav-label-cn { color: var(--text-nav); }
+.nav-item.active .nav-label-en { color: var(--text-nav-muted); }
+
+.nav-footer {
+  padding: 0 30px 30px;
+  border-top: 1px solid var(--border);
+}
+.nav-footer-text {
+  font-size: 10px;
+  color: #8d877f;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1.6;
+  font-weight: 600;
+}
+.nav-dots {
+  display: flex; gap: 4px; margin-top: 8px;
+}
+.nav-dot {
+  width: 12px; height: 12px;
+  border-radius: 2px;
+}
+
+/* ===== MAIN AREA ===== */
+.main-area {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  background: var(--paper);
+}
+.main-area::before {
+  content: "CAPTURE SYSTEM";
+  position: absolute;
+  right: 32px;
+  top: 350px;
+  font-family: Impact, "Arial Black", sans-serif;
+  font-size: 118px;
+  line-height: 0.9;
+  letter-spacing: -0.06em;
+  color: rgba(0,0,0,0.04);
+  pointer-events: none;
+  z-index: 0;
+}
+.main-area::after {
+  content: "INNER KNOWLEDGE";
+  position: absolute;
+  left: 58px;
+  bottom: 24px;
+  font-family: Impact, "Arial Black", sans-serif;
+  font-size: 76px;
+  letter-spacing: -0.05em;
+  color: rgba(0,0,0,0.035);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ===== HERO BACKGROUND ===== */
+.hero-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hero-canvas {
+  width: 100%; height: 100%;
+  position: absolute;
+  inset: 0;
+}
+
+/* background texture elements */
+.hero-orb {
+  position: absolute;
+  width: 340px; height: 340px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #c4580f 0%, #8b3d0a 35%, #4a1f05 65%, transparent 80%);
+  top: -60px; left: 38%;
+  filter: blur(2px);
+  opacity: 0.9;
+}
+
+.hero-poster {
+  position: relative;
+  overflow: hidden;
+  height: 170px;
+  min-height: 170px;
+  background: #0B0F0E url("picture/hero-innex-poster.svg") left center / cover no-repeat;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.hero-user-name {
+  position: absolute;
+  left: 145px;
+  top: 94px;
+  z-index: 4;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "Arial Black", Impact, var(--font-display), sans-serif;
+  font-size: 68px;
+  line-height: 1;
+  letter-spacing: -2.6px;
+  text-transform: uppercase;
+  color: #F15A24;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.24);
+  pointer-events: none;
+}
+.hero-orb::after {
+  content: '';
+  position: absolute;
+  inset: -20px;
+  border-radius: 50%;
+  border: 1px solid rgba(232,93,26,0.2);
+  animation: orb-pulse 4s ease-in-out infinite;
+}
+
+@keyframes orb-pulse {
+  0%,100% { transform: scale(1); opacity: 0.5; }
+  50% { transform: scale(1.05); opacity: 0.2; }
+}
+
+.hero-stripe-1 {
+  position: absolute;
+  width: 140%;
+  height: 55%;
+  background: linear-gradient(135deg, #e8e0d4 0%, #d8d0c4 100%);
+  top: 22%; left: -20%;
+  transform: rotate(-15deg);
+  transform-origin: left center;
+  opacity: 0.9;
+}
+
+.hero-stripe-2 {
+  position: absolute;
+  width: 140%;
+  height: 55%;
+  background: linear-gradient(135deg, #1a2420 0%, #121c18 100%);
+  top: 22%; left: -20%;
+  transform: rotate(-15deg) translateY(40%);
+  transform-origin: left center;
+  opacity: 0.95;
+}
+
+.hero-grid {
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(232,93,26,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(232,93,26,0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.hero-code-tl {
+  position: absolute;
+  top: 12px; left: 60px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: rgba(0,0,0,0.25);
+  line-height: 1.8;
+}
+
+.hero-code-br {
+  position: absolute;
+  bottom: 80px; left: 30px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: rgba(255,255,255,0.12);
+  line-height: 1.8;
+}
+
+.hero-code-tr {
+  position: absolute;
+  top: 20px; right: 40px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: rgba(255,255,255,0.1);
+  line-height: 1.8;
+  text-align: right;
+}
+
+.hero-dots {
+  position: absolute; inset: 0;
+  overflow: hidden;
+}
+.hero-dot {
+  position: absolute;
+  width: 5px; height: 5px;
+  background: var(--accent);
+  border-radius: 1px;
+  opacity: 0.6;
+}
+
+/* ===== PAGE CONTENT ===== */
+.page {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+}
+.page.active { display: flex; }
+
+/* ===== INBOX PAGE ===== */
+.inbox-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.hero-strip {
+  height: 170px;
+  position: relative;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+/* calendar popover */
+.cal-popover {
+  position: absolute;
+  top: 44px; right: 12px;
+  background: #fff;
+  border: 1px solid var(--border-medium);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+  padding: 16px;
+  z-index: 200;
+  width: 240px;
+  display: none;
+}
+.cal-popover.open { display: block; }
+
+.cal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 12px;
+}
+.cal-header span {
+  font-size: 13px; font-weight: 600; color: var(--text-primary);
+}
+.cal-nav-btn {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-secondary); font-size: 14px; padding: 2px 4px;
+}
+.cal-grid {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.cal-day-label {
+  font-size: 10px; color: var(--text-muted); text-align: center; padding: 4px 0;
+  font-weight: 500;
+}
+.cal-day {
+  font-size: 11px; text-align: center; padding: 5px 2px;
+  border-radius: 5px; cursor: pointer; position: relative;
+  color: var(--text-secondary);
+  transition: all 0.1s;
+}
+.cal-day:hover { background: var(--accent-dim); }
+.cal-day.has-record::after {
+  content: '';
+  width: 4px; height: 4px;
+  background: var(--accent);
+  border-radius: 50%;
+  position: absolute; bottom: 1px; left: 50%; transform: translateX(-50%);
+}
+.cal-day.today {
+  background: var(--accent); color: #fff; font-weight: 600;
+}
+.cal-day.today::after { background: rgba(255,255,255,0.8); }
+.cal-day.other-month { color: var(--text-light); }
+.cal-legend {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--border-light);
+  font-size: 10px; color: var(--text-muted);
+}
+.cal-legend::before {
+  content: '';
+  width: 8px; height: 8px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+/* info modal */
+.info-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(4px);
+  z-index: 300;
+  display: none; align-items: center; justify-content: center;
+}
+.info-modal-overlay.open { display: flex; }
+.info-modal {
+  display: flex; gap: 16px;
+}
+.info-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  padding: 20px;
+  width: 300px;
+}
+.info-card-title {
+  font-size: 12px; font-weight: 700;
+  color: var(--text-primary); letter-spacing: 0.06em;
+  text-transform: uppercase; margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-light);
+}
+.info-overview {
+  display: flex; gap: 8px; margin-bottom: 14px;
+}
+.info-stat {
+  flex: 1; text-align: center;
+  background: var(--bg-panel);
+  border-radius: 8px; padding: 10px 6px;
+  cursor: pointer; transition: background 0.15s;
+}
+.info-stat:hover { background: var(--accent-dim); }
+.info-stat-num { font-size: 20px; font-weight: 700; color: var(--accent); }
+.info-stat-label { font-size: 9px; color: var(--text-muted); margin-top: 2px; }
+.info-remind-list { display: flex; flex-direction: column; gap: 8px; }
+.info-remind-item {
+  background: var(--bg-panel); border-radius: 8px; padding: 10px;
+}
+.info-remind-num {
+  font-size: 9px; font-weight: 700; color: var(--accent); margin-bottom: 3px;
+}
+.info-remind-title { font-size: 11px; font-weight: 500; color: var(--text-primary); margin-bottom: 2px; }
+.info-remind-desc { font-size: 10px; color: var(--text-secondary); }
+.info-remind-link {
+  font-size: 10px; color: var(--accent); cursor: pointer; text-decoration: underline;
+  display: block; margin-top: 4px;
+}
+
+.week-card { width: 260px; }
+.week-stat-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 0; border-bottom: 1px solid var(--border-light);
+  font-size: 12px;
+}
+.week-stat-row:last-child { border-bottom: none; }
+.week-stat-label { color: var(--text-secondary); }
+.week-stat-value { font-weight: 600; color: var(--text-primary); }
+
+/* quick capture */
+.quick-capture-wrap {
+  padding: 0 20px;
+  flex-shrink: 0;
+}
+
+.section-header {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 8px;
+}
+.section-bar {
+  width: 3px; height: 18px; background: var(--accent); border-radius: 2px;
+}
+.section-title {
+  font-size: 20px; font-weight: 850; color: var(--text-primary);
+  letter-spacing: -0.2px;
+}
+.section-title-en {
+  font-size: 11px; color: #8A8278; font-weight: 600;
+  letter-spacing: 0.12em; text-transform: uppercase; margin-left: 4px;
+}
+
+.quick-capture-card {
+  background:
+    radial-gradient(circle at 20% 10%, rgba(241,90,36,0.05), transparent 30%),
+    linear-gradient(180deg, #F8F4ED, #EFEAE2);
+  border: 1px solid var(--border-medium);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.06);
+}
+
+.qc-fields {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  margin-bottom: 8px;
+}
+
+.qc-field-label {
+  font-size: 10px; font-weight: 600;
+  color: var(--text-muted); letter-spacing: 0.05em;
+  text-transform: uppercase; margin-bottom: 4px;
+}
+
+.qc-textarea {
+  width: 100%;
+  border: 1px solid var(--border-medium);
+  border-radius: 7px;
+  padding: 9px 11px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--text-primary);
+  resize: none;
+  height: 66px;
+  background: rgba(255,255,255,0.52);
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  line-height: 1.6;
+}
+.qc-textarea:focus { outline: none; border-color: var(--accent); background: #fff; box-shadow: 0 0 0 3px rgba(241,90,36,0.08); }
+.qc-textarea::placeholder { color: var(--text-light); }
+
+.qc-attachments {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 8px; flex-wrap: wrap;
+}
+.qc-attach-btn {
+  display: flex; align-items: center; gap: 4px;
+  border: 1px solid var(--border-medium);
+  border-radius: 6px; padding: 4px 8px;
+  cursor: pointer; font-size: 11px; color: var(--text-muted);
+  background: rgba(255,255,255,0.45); transition: all 0.15s;
+}
+.qc-attach-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(241,90,36,0.06); }
+.qc-attach-chip {
+  display: flex; align-items: center; gap: 4px;
+  background: rgba(255,255,255,0.58); border-radius: 6px;
+  padding: 4px 8px; font-size: 11px; color: var(--text-secondary);
+  border: 1px solid var(--border-light);
+}
+.qc-attach-chip-icon { font-size: 11px; }
+.qc-attach-chip-name { max-width: 112px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qc-attach-remove {
+  cursor: pointer; color: var(--text-muted);
+  background: none; border: none; font-size: 12px; padding: 0;
+}
+.qc-attach-remove:hover { color: #ef4444; }
+
+.qc-actions {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.qc-status-btns {
+  display: flex; gap: 5px;
+}
+.qc-status-btn {
+  display: flex; align-items: center; gap: 4px;
+  padding: 5px 10px; border-radius: 6px;
+  border: 1px solid var(--border-medium);
+  background: rgba(255,255,255,0.38); cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 11px; color: var(--text-secondary);
+  transition: all 0.15s;
+}
+.qc-status-btn:hover { border-color: var(--accent); color: var(--accent); }
+.qc-status-btn.selected {
+  background: var(--accent-dim); border-color: var(--accent); color: var(--accent);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff; border: none;
+  border-radius: 7px; padding: 8px 17px;
+  font-family: var(--font-body);
+  font-size: 12px; font-weight: 700;
+  cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.15s;
+  display: flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+  box-shadow: 0 6px 14px rgba(241,90,36,0.22);
+}
+.btn-primary:hover { background: var(--accent-hover); transform: translateY(-1px); box-shadow: 0 9px 18px rgba(241,90,36,0.28); }
+.btn-primary:active { transform: translateY(0); }
+
+/* inbox list */
+.inbox-list-wrap {
+  flex: 1; overflow: hidden;
+  padding: 0 12px 0;
+  display: flex; flex-direction: column;
+  min-height: 590px;
+}
+
+.inbox-card {
+  background: var(--paper-light);
+  border: 1px solid rgba(0,0,0,0.14);
+  border-radius: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  box-shadow: 0 16px 36px rgba(0,0,0,0.06);
+}
+
+.inbox-toolbar {
+  display: flex; align-items: center; gap: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.inbox-title-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px 0;
+  flex-shrink: 0;
+}
+.inbox-title-cn { font-size: 20px; font-weight: 850; color: var(--text-primary); }
+.inbox-title-en { font-size: 11px; color: #8A8278; letter-spacing: 0.12em; font-weight: 600; }
+.inbox-search-area {
+  margin-left: auto;
+  position: relative;
+}
+.inbox-search {
+  border: 1px solid var(--border-medium);
+  border-radius: 999px; padding: 6px 12px 6px 28px;
+  font-family: var(--font-body); font-size: 12px;
+  color: var(--text-primary); background: rgba(255,255,255,0.56);
+  width: 230px; transition: all 0.15s;
+}
+.inbox-search:focus { outline: none; border-color: var(--accent); width: 270px; box-shadow: 0 0 0 3px rgba(241,90,36,0.08); }
+.inbox-search::placeholder { color: var(--text-muted); }
+.inbox-search-icon {
+  position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
+  color: var(--text-muted); font-size: 12px;
+}
+
+.inbox-tabs {
+  display: inline-flex; gap: 0;
+  padding: 0;
+  flex-shrink: 0;
+}
+.inbox-tab {
+  padding: 4px 10px;
+  font-size: 12px; cursor: pointer;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  transition: all 0.15s; white-space: nowrap;
+}
+.inbox-tab:hover { color: var(--text-primary); }
+.inbox-tab.active {
+  color: var(--accent); border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.inbox-filters {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px 6px;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0; flex-wrap: wrap;
+}
+.inbox-filters .inbox-tabs {
+  margin-right: 14px;
+}
+.filter-btn {
+  display: flex; align-items: center; gap: 3px;
+  padding: 3px 8px; border-radius: 6px;
+  border: 1px solid var(--border-medium);
+  background: rgba(255,255,255,0.5); cursor: pointer;
+  font-family: var(--font-body); font-size: 11px;
+  color: var(--text-secondary); transition: all 0.15s;
+}
+.filter-btn:hover { border-color: var(--accent); color: var(--accent); }
+.filter-tag-chip {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 8px; border-radius: 5px;
+  background: var(--accent-dim); border: 1px solid rgba(232,93,26,0.3);
+  font-size: 11px; color: var(--accent); font-weight: 500;
+}
+.filter-tag-remove { cursor: pointer; font-size: 10px; }
+
+.inbox-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.inbox-table-head {
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.inbox-table-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.inbox-table {
+  width: 100%;
+  min-width: 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.inbox-table th {
+  background: #eee8de;
+  font-size: 11px; font-weight: 600;
+  color: var(--text-muted); text-align: left;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border-light);
+  white-space: nowrap; letter-spacing: 0.04em;
+}
+.inbox-table td {
+  padding: 4px 8px;
+  font-size: 12px; color: var(--text-primary);
+  border-bottom: 1px solid var(--border-light);
+  vertical-align: middle;
+}
+.inbox-table th.col-title, .inbox-table td.col-title { padding-right: 12px; }
+.inbox-table th.col-source, .inbox-table td.col-source { padding-left: 12px; }
+.inbox-table .col-check {
+  text-align: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+.inbox-table .col-check .cb {
+  display: block;
+  margin: 0 auto;
+}
+.inbox-table tr:last-child td { border-bottom: none; }
+.inbox-table tbody tr {
+  transition: background 0.1s; cursor: pointer;
+}
+.inbox-table tbody tr:hover { background: rgba(241,90,36,0.06); }
+.inbox-table tbody tr.selected { background: var(--accent-dim); }
+
+.col-check { width: 36px; }
+.col-title { width: 26%; min-width: 220px; }
+.col-source { width: 15%; min-width: 130px; }
+.col-time { width: 12%; min-width: 120px; white-space: nowrap; }
+.col-status { width: 9%; }
+.col-tags { width: 15%; }
+.col-actions { width: 24%; min-width: 320px; }
+
+.row-title {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.row-title .error-mark {
+  color: #ef4444; margin-left: 4px; cursor: help; font-size: 12px;
+}
+
+.source-badge {
+  font-size: 11px; color: var(--text-secondary);
+}
+.source-domain { color: var(--text-muted); font-size: 11px; }
+
+.status-badge {
+  display: inline-block;
+  padding: 3px 8px; border-radius: 6px;
+  font-size: 11px; font-weight: 600;
+  white-space: nowrap;
+}
+.status-waiting { background: rgba(107,107,99,0.12); color: #5f5b55; }
+.status-pending { background: rgba(241,90,36,0.12); color: var(--accent); }
+.status-done { background: rgba(36,160,102,0.12); color: #1C8C5A; }
+.status-fix { background: rgba(220,70,70,0.12); color: #D94A3A; }
+
+.tag-chip {
+  display: inline-block;
+  padding: 1px 5px; border-radius: 3px;
+  font-size: 11px; background: var(--bg-panel);
+  color: var(--text-secondary); border: 1px solid var(--border-light);
+  margin: 1px;
+}
+
+.row-actions {
+  display: flex; gap: 4px; flex-wrap: nowrap; align-items: center;
+  white-space: nowrap;
+}
+.row-action-btn {
+  font-size: 11px; padding: 4px 8px;
+  border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border-medium);
+  background: rgba(255,255,255,0.55); color: var(--text-secondary);
+  font-family: var(--font-body);
+  transition: all 0.12s; white-space: nowrap;
+}
+.row-action-btn:hover { border-color: var(--accent); color: var(--accent); }
+.row-action-btn.danger:hover { border-color: #ef4444; color: #ef4444; }
+.row-action-btn.primary-action {
+  background: rgba(241,90,36,0.08); border-color: rgba(241,90,36,0.32);
+  color: var(--accent); font-weight: 500;
+}
+.row-action-btn.primary-action:hover { background: var(--accent); color: #fff; }
+
+.search-wrap { position: relative; flex: 1; }
+.search-suggestions {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: #fff;
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  box-shadow: 0 12px 34px rgba(0,0,0,0.14);
+  overflow: hidden;
+}
+.search-suggestions.open { display: block; }
+.search-suggestion-item {
+  padding: 9px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-light);
+}
+.search-suggestion-item:last-child { border-bottom: none; }
+.search-suggestion-item:hover { background: var(--accent-dim); color: var(--accent); }
+.search-suggestion-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* ===== RIGHT DRAWER ===== */
+.right-drawer {
+  width: 0;
+  overflow: hidden;
+  transition: width 0.25s cubic-bezier(0.4,0,0.2,1);
+  flex-shrink: 0;
+  position: relative;
+  background: #fff;
+  border-left: 1px solid var(--border-light);
+}
+.right-drawer.open { width: 460px; }
+
+/* Inbox drawer should overlay page content instead of taking layout width */
+#inbox-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(460px, 100%);
+  max-width: 100%;
+  transform: translateX(100%);
+  transition: transform 0.25s cubic-bezier(0.4,0,0.2,1);
+  z-index: 700;
+  box-shadow: -10px 0 28px rgba(0,0,0,0.12);
+  border-left: 1px solid var(--border-light);
+  background: #fff;
+  pointer-events: none;
+}
+#inbox-drawer.open {
+  width: min(460px, 100%);
+  transform: translateX(0);
+  pointer-events: auto;
+}
+#inbox-drawer .drawer-inner {
+  width: 100%;
+  height: 100%;
+}
+#kb-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(460px, 100%);
+  height: 100vh;
+  max-width: 100%;
+  transform: translateX(100%);
+  transition: transform 0.25s cubic-bezier(0.4,0,0.2,1);
+  z-index: 700;
+  box-shadow: -10px 0 28px rgba(0,0,0,0.12);
+  border-left: 1px solid var(--border-light);
+  background: #fff;
+  pointer-events: none;
+}
+#kb-drawer.open {
+  width: min(460px, 100%);
+  transform: translateX(0);
+  pointer-events: auto;
+}
+#kb-drawer .drawer-inner {
+  width: 100%;
+  height: 100%;
+}
+
+.drawer-inner {
+  width: 460px;
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex; flex-direction: column;
+}
+
+.drawer-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px; flex-shrink: 0;
+}
+.drawer-title {
+  font-size: 15px; font-weight: 700; color: var(--text-primary);
+}
+.drawer-close {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--border-medium);
+  background: none; color: var(--text-muted);
+  transition: all 0.15s; font-size: 14px;
+}
+.drawer-close:hover { background: var(--bg-panel); color: var(--text-primary); }
+.drawer-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.drawer-back {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--border-medium);
+  background: none; color: var(--text-muted);
+  transition: all 0.15s; font-size: 14px; font-weight: 700;
+}
+.drawer-back:hover { background: var(--bg-panel); color: var(--text-primary); }
+
+.drawer-section { margin-bottom: 16px; }
+.drawer-section-title {
+  font-size: 11px; font-weight: 700;
+  color: var(--accent); letter-spacing: 0.06em;
+  text-transform: uppercase; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 6px;
+}
+.drawer-section-title::before {
+  content: '';
+  width: 3px; height: 12px;
+  background: var(--accent); border-radius: 2px;
+}
+.drawer-field {
+  display: flex; gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 12px;
+}
+.drawer-field:last-child { border-bottom: none; }
+.drawer-field-label {
+  width: 60px; flex-shrink: 0;
+  color: var(--text-muted); font-size: 11px;
+}
+.drawer-field-value {
+  flex: 1; color: var(--text-primary); font-weight: 400;
+  line-height: 1.5;
+}
+
+.drawer-body-text {
+  font-size: 12.5px; color: var(--text-secondary);
+  line-height: 1.8; background: var(--bg-card);
+  border-radius: 7px; padding: 12px;
+  border: 1px solid var(--border-light);
+}
+
+.drawer-editable-area {
+  border: 1px solid var(--border-medium);
+  border-radius: 7px; padding: 10px;
+  font-family: var(--font-body); font-size: 12px;
+  color: var(--text-primary); background: #fff;
+  min-height: 60px; resize: none; width: 100%;
+  line-height: 1.6;
+}
+.drawer-editable-area:focus { outline: none; border-color: var(--accent); }
+
+.drawer-related-list { display: flex; flex-direction: column; gap: 4px; }
+.drawer-related-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 8px; border-radius: 6px;
+  background: var(--bg-card); border: 1px solid var(--border-light);
+  cursor: pointer; transition: all 0.12s;
+  font-size: 11px;
+}
+.drawer-related-item:hover { border-color: var(--accent); background: var(--accent-dim); }
+.drawer-related-note { color: var(--text-primary); font-weight: 500; }
+.drawer-related-type { color: var(--text-muted); font-size: 10px; }
+
+.drawer-actions {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+.drawer-actions.two-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.drawer-actions.two-row .drawer-action-btn {
+  min-width: 0;
+}
+.ai-note-link-card {
+  border: 1px solid var(--border-medium);
+  background: var(--bg-panel);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.ai-note-link-item {
+  margin-top: 8px;
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.ai-note-link-item:hover { text-decoration: underline; }
+.drawer-action-btn {
+  flex: 1; min-width: 80px;
+  padding: 7px 10px; border-radius: 6px;
+  border: 1px solid var(--border-medium);
+  background: none; cursor: pointer;
+  font-family: var(--font-body); font-size: 11px;
+  color: var(--text-secondary); transition: all 0.15s;
+  text-align: center; font-weight: 500;
+}
+.drawer-action-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.drawer-action-btn.danger:hover { border-color: #ef4444; color: #ef4444; background: rgba(239,68,68,0.05); }
+.drawer-action-btn.primary {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.drawer-action-btn.primary:hover { background: var(--accent-hover); }
+.draft-actions-fixed {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  background: #fff;
+  margin-top: 8px;
+  padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
+}
+.draft-actions-fixed .drawer-action-btn {
+  min-width: 0;
+  white-space: nowrap;
+}
+.kb-note-fixed-top {
+  flex-shrink: 0;
+}
+.kb-note-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.kb-note-fixed-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  background: #fff;
+  margin-top: 8px;
+  padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
+}
+
+.draft-field {
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  padding: 10px;
+  margin-bottom: 8px;
+  background: var(--bg-card);
+}
+.draft-field-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+.draft-field textarea {
+  width: 100%;
+  min-height: 52px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  padding: 8px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 1.6;
+  resize: vertical;
+}
+.draft-field textarea:focus { outline: none; border-color: var(--accent); }
+
+/* note body list */
+.note-body-list { display: flex; flex-direction: column; gap: 10px; }
+.note-body-item {
+  font-size: 12.5px; color: var(--text-primary);
+  line-height: 1.8; padding-left: 12px;
+  position: relative;
+}
+.note-body-item::before {
+  content: attr(data-num) ')';
+  position: absolute; left: 0;
+  color: var(--accent); font-weight: 600; font-size: 11px;
+}
+
+.related-question {
+  display: flex; align-items: flex-start; gap: 6px;
+  padding: 8px 0; font-size: 12px; color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-light); cursor: pointer;
+}
+.related-question:hover { color: var(--accent); }
+.related-question::before { content: '?'; color: var(--accent); font-weight: 700; }
+
+.quote-block {
+  border-left: 3px solid var(--accent);
+  padding: 10px 12px;
+  background: var(--accent-dim);
+  border-radius: 0 7px 7px 0;
+  font-size: 12px; font-style: italic;
+  color: var(--text-secondary); line-height: 1.7;
+  margin: 8px 0;
+}
+
+/* ===== KNOWLEDGE BASE PAGE ===== */
+.kb-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.kb-header {
+  padding: 20px 24px 14px;
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-light);
+}
+.kb-header-title {
+  font-size: 22px; font-weight: 700;
+  display: flex; align-items: center; gap: 10px;
+  color: var(--text-primary);
+}
+.kb-header-en {
+  font-size: 11px; color: var(--text-muted); letter-spacing: 0.1em;
+  font-weight: 400;
+}
+.kb-header-sub {
+  font-size: 12px; color: var(--text-secondary); margin-top: 4px;
+}
+
+.kb-body {
+  flex: 1; overflow: hidden;
+  display: flex; position: relative;
+  background: var(--bg-panel);
+}
+
+.kb-graph-area {
+  flex: 1; position: relative; overflow: hidden;
+}
+
+.kb-legend {
+  position: absolute; top: 16px; left: 16px;
+  background: rgba(255,255,255,0.9);
+  border: 1px solid var(--border-light);
+  border-radius: 10px; padding: 14px 16px;
+  backdrop-filter: blur(8px);
+  z-index: 10;
+}
+.legend-item {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 6px; font-size: 11px; color: var(--text-secondary);
+}
+.legend-item:last-child { margin-bottom: 0; }
+.legend-dot {
+  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+}
+.legend-line {
+  width: 24px; height: 0;
+  border-top: 1px solid #666; flex-shrink: 0;
+}
+.legend-dline {
+  width: 24px; height: 0;
+  border-top: 1px dashed #999; flex-shrink: 0;
+}
+
+.kb-controls {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 8px; align-items: center;
+  background: rgba(255,255,255,0.92);
+  border: 1px solid var(--border-medium);
+  border-radius: 10px; padding: 8px 14px;
+  backdrop-filter: blur(8px);
+  z-index: 10;
+}
+.kb-ctrl-btn {
+  padding: 5px 12px; border-radius: 6px;
+  border: 1px solid var(--border-light);
+  background: none; cursor: pointer;
+  font-family: var(--font-body); font-size: 11px;
+  color: var(--text-secondary); transition: all 0.15s;
+  display: flex; align-items: center; gap: 5px;
+}
+.kb-ctrl-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.kb-interactions {
+  position: absolute; bottom: 16px; left: 16px;
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 10px; color: var(--text-secondary);
+}
+.kb-int-item {
+  display: flex; align-items: center; gap: 6px;
+}
+
+/* Graph SVG */
+.graph-svg {
+  width: 100%; height: 100%;
+  cursor: grab;
+}
+.graph-svg:active { cursor: grabbing; }
+
+.graph-node {
+  cursor: pointer;
+  transition: filter 0.2s;
+}
+.graph-node:hover { filter: brightness(1.15); }
+.graph-node.selected { filter: drop-shadow(0 0 8px rgba(232,93,26,0.6)); }
+
+.node-label {
+  font-family: var(--font-body);
+  font-weight: 500;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ===== AI ASSISTANT PAGE ===== */
+.ai-layout {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ai-history {
+  width: 280px;
+  flex-shrink: 0;
+  background: var(--bg-card);
+  border-right: 1px solid var(--border-light);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.ai-hist-top {
+  padding: 26px 14px 10px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.ai-new-btn {
+  width: 100%;
+  padding: 8px; border-radius: 7px;
+  border: 1px solid var(--border-medium);
+  background: none; cursor: pointer;
+  font-family: var(--font-body); font-size: 12px;
+  font-weight: 600; color: var(--accent);
+  transition: all 0.15s;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+}
+.ai-new-btn:hover { background: var(--accent); color: #fff; }
+
+.ai-hist-search {
+  margin-top: 8px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px; padding: 5px 8px;
+  font-family: var(--font-body); font-size: 11px;
+  color: var(--text-primary); background: #fff;
+  width: 100%;
+}
+.ai-hist-search:focus { outline: none; border-color: var(--accent); }
+.ai-hist-search::placeholder { color: var(--text-muted); }
+
+.ai-hist-list { flex: 1; overflow-y: auto; padding: 28px 0 10px; }
+.ai-hist-group {
+  padding: 4px 14px; font-size: 10px;
+  color: var(--text-muted); letter-spacing: 0.06em; font-weight: 700;
+  margin-bottom: 2px;
+  display: none;
+}
+.ai-hist-item {
+  padding: 7px 14px; cursor: pointer;
+  transition: background 0.1s;
+  display: flex; align-items: center; justify-content: flex-start;
+}
+.ai-hist-item:hover { background: rgba(0,0,0,0.04); }
+.ai-hist-item.active { background: var(--accent-dim); }
+.ai-hist-name { font-size: 12px; color: var(--text-primary); font-weight: 500; }
+.ai-hist-time { font-size: 10px; color: var(--text-muted); margin-left: auto; }
+
+.ai-main {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+}
+
+.ai-title-bar {
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.6);
+  backdrop-filter: blur(4px);
+}
+.ai-title {
+  font-size: 18px; font-weight: 700; color: var(--text-primary);
+  display: flex; align-items: center; gap: 8px;
+}
+.ai-title-sub { font-size: 11px; color: var(--text-muted); letter-spacing: 0.06em; }
+
+.ai-messages {
+  flex: 1; overflow-y: auto;
+  padding: 20px 24px;
+  display: flex; flex-direction: column; gap: 20px;
+}
+
+.ai-msg { display: flex; gap: 12px; }
+.ai-msg.user { flex-direction: row-reverse; }
+
+.ai-avatar {
+  width: 34px; height: 34px; border-radius: 50%;
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700;
+}
+.ai-avatar.assistant {
+  background: linear-gradient(135deg, var(--accent) 0%, #8b3d0a 100%);
+  color: #fff;
+}
+.ai-avatar.user { background: var(--bg-panel); color: var(--text-secondary); border: 1px solid var(--border-medium); }
+
+.ai-bubble {
+  max-width: 70%;
+  background: #fff;
+  border: 1px solid var(--border-light);
+  border-radius: 12px; padding: 14px 16px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+.ai-msg.user .ai-bubble {
+  background: var(--accent); color: #fff;
+  border-color: var(--accent);
+}
+
+.ai-bubble-time {
+  font-size: 10px; color: var(--text-muted); margin-bottom: 6px;
+}
+.ai-msg.user .ai-bubble-time { color: rgba(255,255,255,0.7); }
+
+.ai-bubble-text {
+  font-size: 13px; line-height: 1.8; color: var(--text-primary);
+}
+.ai-msg.user .ai-bubble-text { color: #fff; }
+.ai-bubble-text ul { padding-left: 16px; margin: 6px 0; }
+.ai-bubble-text li { margin-bottom: 4px; }
+
+.ai-refs {
+  margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px;
+}
+.ai-ref-chip {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 8px; border-radius: 5px;
+  border: 1px solid var(--border-medium);
+  background: var(--bg-card); cursor: pointer;
+  font-size: 10px; color: var(--text-secondary);
+  transition: all 0.12s;
+}
+.ai-ref-chip:hover { border-color: var(--accent); color: var(--accent); }
+.ai-ref-chip-name { font-weight: 500; }
+.ai-ref-chip-src { color: var(--text-muted); }
+
+.ai-add-note-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-top: 8px; padding: 4px 10px; border-radius: 5px;
+  border: 1px dashed rgba(232,93,26,0.4);
+  background: var(--accent-dim); cursor: pointer;
+  font-size: 10px; color: var(--accent); font-weight: 500;
+  transition: all 0.12s;
+}
+.ai-add-note-btn:hover { border-style: solid; background: var(--accent); color: #fff; }
+
+.ai-input-area {
+  padding: 16px 24px 18px;
+  border-top: 1px solid var(--border-light);
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.7);
+  backdrop-filter: blur(4px);
+}
+.ai-input-row {
+  display: flex; gap: 12px; align-items: flex-end;
+}
+.ai-input-box {
+  flex: 1;
+  border: 1px solid var(--border-medium);
+  border-radius: 12px; padding: 14px 16px;
+  font-family: var(--font-body); font-size: 15px;
+  color: var(--text-primary); background: #fff;
+  resize: none; min-height: 64px; max-height: 180px;
+  line-height: 1.65; transition: border-color 0.15s, box-shadow 0.15s;
+}
+.ai-input-box:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(241,90,36,0.08); }
+.ai-input-box::placeholder { color: var(--text-muted); }
+.ai-send-btn {
+  width: 58px; height: 58px;
+  background: var(--accent); color: #fff;
+  border: none; border-radius: 14px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 18px; transition: all 0.15s; flex-shrink: 0;
+}
+.ai-send-btn:hover { background: var(--accent-hover); transform: scale(1.05); }
+
+.ai-input-tools {
+  display: flex; gap: 8px; margin-top: 8px; align-items: center;
+}
+.ai-tool-btn {
+  width: 28px; height: 28px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px; background: none;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; color: var(--text-muted); transition: all 0.15s;
+}
+.ai-tool-btn:hover { border-color: var(--accent); color: var(--accent); }
+.ai-hint { font-size: 12px; color: var(--text-muted); margin-left: auto; }
+
+/* scrollbars */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.2); }
+
+/* tooltip */
+[data-tooltip] { position: relative; }
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute; bottom: calc(100% + 6px); left: 50%;
+  transform: translateX(-50%);
+  background: #1a1c1b; color: #fff;
+  font-size: 10px; padding: 4px 8px; border-radius: 4px;
+  white-space: nowrap; pointer-events: none; z-index: 999;
+  font-family: var(--font-body);
+}
+
+/* checkbox */
+.cb {
+  width: 14px; height: 14px;
+  border: 1.5px solid var(--border-medium);
+  border-radius: 3px; cursor: pointer; flex-shrink: 0;
+  appearance: none; background: #fff; transition: all 0.12s;
+}
+.cb:checked { background: var(--accent); border-color: var(--accent); }
+.cb:checked::after {
+  content: '✓'; color: #fff; font-size: 9px;
+  display: flex; align-items: center; justify-content: center;
+  height: 100%;
+}
+
+/* page-specific bg */
+.page-inbox .hero-strip:not(.hero-poster) { background: var(--bg-dark); }
+.page-kb, .page-ai { background: var(--bg-panel); }
+
+/* notification dot */
+.notif-dot {
+  width: 6px; height: 6px;
+  background: var(--accent); border-radius: 50%;
+  position: absolute; top: 4px; right: 4px;
+}
+
+/* mini scrollable area tweaks */
+.ai-messages::-webkit-scrollbar { width: 4px; }
+.inbox-table-wrap::-webkit-scrollbar { width: 4px; }
+
+/* graph mini-map */
+.graph-minimap {
+  position: absolute; bottom: 60px; right: 16px;
+  width: 120px; height: 80px;
+  background: rgba(255,255,255,0.7);
+  border: 1px solid var(--border-medium);
+  border-radius: 8px; overflow: hidden;
+  backdrop-filter: blur(4px);
+}
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="topbar-actions">
+    <button class="topbar-btn active" id="cal-btn" onclick="toggleCal()" data-tooltip="信息与提醒">
+      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+      </svg>
+      <span class="notif-dot"></span>
+    </button>
+  </div>
+</div>
+
+<!-- CALENDAR POPOVER -->
+<div class="cal-popover" id="cal-popover">
+  <div class="cal-header">
+    <button class="cal-nav-btn">‹</button>
+    <span>2026年 5月</span>
+    <button class="cal-nav-btn">›</button>
+  </div>
+  <div class="cal-grid">
+    <div class="cal-day-label">日</div><div class="cal-day-label">一</div><div class="cal-day-label">二</div>
+    <div class="cal-day-label">三</div><div class="cal-day-label">四</div><div class="cal-day-label">五</div>
+    <div class="cal-day-label">六</div>
+    <!-- Week 1 -->
+    <div class="cal-day other-month">26</div><div class="cal-day other-month">27</div>
+    <div class="cal-day other-month">28</div><div class="cal-day other-month">29</div>
+    <div class="cal-day other-month">30</div>
+    <div class="cal-day has-record" onclick="openInfoModal()">1</div>
+    <div class="cal-day has-record" onclick="openInfoModal()">2</div>
+    <!-- Week 2 -->
+    <div class="cal-day">3</div><div class="cal-day has-record" onclick="openInfoModal()">4</div>
+    <div class="cal-day has-record" onclick="openInfoModal()">5</div>
+    <div class="cal-day">6</div><div class="cal-day">7</div>
+    <div class="cal-day has-record" onclick="openInfoModal()">8</div>
+    <div class="cal-day has-record" onclick="openInfoModal()">9</div>
+    <!-- Week 3 -->
+    <div class="cal-day">10</div><div class="cal-day has-record" onclick="openInfoModal()">11</div>
+    <div class="cal-day has-record" onclick="openInfoModal()">12</div>
+    <div class="cal-day has-record" onclick="openInfoModal()">13</div>
+    <div class="cal-day today" onclick="openInfoModal()">14</div>
+    <div class="cal-day has-record" onclick="openInfoModal()">15</div>
+    <div class="cal-day">16</div>
+    <!-- Week 4 -->
+    <div class="cal-day">17</div><div class="cal-day">18</div><div class="cal-day">19</div>
+    <div class="cal-day">20</div><div class="cal-day">21</div><div class="cal-day">22</div>
+    <div class="cal-day">23</div>
+    <!-- Week 5 -->
+    <div class="cal-day">24</div><div class="cal-day">25</div><div class="cal-day">26</div>
+    <div class="cal-day">27</div><div class="cal-day">28</div><div class="cal-day">29</div>
+    <div class="cal-day">30</div>
+    <div class="cal-day">31</div>
+    <div class="cal-day other-month">1</div><div class="cal-day other-month">2</div>
+    <div class="cal-day other-month">3</div><div class="cal-day other-month">4</div>
+    <div class="cal-day other-month">5</div><div class="cal-day other-month">6</div>
+  </div>
+  <div class="cal-legend">有记录</div>
+</div>
+
+<!-- INFO MODAL -->
+<div class="info-modal-overlay" id="info-modal" onclick="if(event.target===this)closeInfoModal()">
+  <div class="info-modal">
+    <div class="info-card">
+      <div class="info-card-title">今日信息卡 · 2026-05-14</div>
+      <div class="info-overview">
+        <div class="info-stat" onclick="jumpToInboxFilter('later')">
+          <div class="info-stat-num">8</div>
+          <div class="info-stat-label">稍后看</div>
+        </div>
+        <div class="info-stat" onclick="jumpToInboxFilter('pending')">
+          <div class="info-stat-num">5</div>
+          <div class="info-stat-label">待内化</div>
+        </div>
+        <div class="info-stat" onclick="jumpToInboxFilter('done')">
+          <div class="info-stat-num">2</div>
+          <div class="info-stat-label">已沉淀新增</div>
+        </div>
+      </div>
+      <div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">今日建议处理</div>
+      <div class="info-remind-list">
+        <div class="info-remind-item">
+          <div class="info-remind-num">01</div>
+          <div class="info-remind-title">Transformer 笔记：长上下文不是万能解</div>
+          <div class="info-remind-desc">待内化 · 收录已 3 天，内容质量高</div>
+          <span class="info-remind-link" onclick="openContextNoteDrawer(3)">查看对应笔记 →</span>
+        </div>
+        <div class="info-remind-item">
+          <div class="info-remind-num">02</div>
+          <div class="info-remind-title">Agent 设计灵感：知识助手不等于聊天机器人</div>
+          <div class="info-remind-desc">稍后看 · 有批注，可进入内化流程</div>
+          <span class="info-remind-link" onclick="openContextNoteDrawer(2)">查看对应笔记 →</span>
+        </div>
+        <div class="info-remind-item">
+          <div class="info-remind-num">03</div>
+          <div class="info-remind-title">RAG 向量检索实践笔记</div>
+          <div class="info-remind-desc">稍后看 · 等待时间最久的未处理记录</div>
+          <span class="info-remind-link" onclick="openContextNoteDrawer(9)">查看对应笔记 →</span>
+        </div>
+      </div>
+    </div>
+    <div class="info-card week-card">
+      <div class="info-card-title">周反馈 · 05/06–05/12</div>
+      <div class="week-stat-row">
+        <span class="week-stat-label">本周新增记录</span>
+        <span class="week-stat-value">18 条</span>
+      </div>
+      <div class="week-stat-row">
+        <span class="week-stat-label">本周已沉淀</span>
+        <span class="week-stat-value">7 条</span>
+      </div>
+      <div class="week-stat-row">
+        <span class="week-stat-label">关注主题 Top3</span>
+        <span class="week-stat-value">RAG · Agent · 复盘</span>
+      </div>
+      <div class="week-stat-row">
+        <span class="week-stat-label">可复用笔记</span>
+        <span class="week-stat-value">6 条</span>
+      </div>
+      <div class="week-stat-row" style="border-bottom:none;padding-top:10px">
+        <span class="week-stat-label" style="color:var(--accent);font-weight:600;">下周建议补强</span>
+        <span class="week-stat-value" style="color:var(--accent)">知识系统</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- APP LAYOUT -->
+<div class="app-layout">
+
+  <!-- LEFT NAV -->
+  <nav class="nav">
+    <div class="nav-brand">
+      <div class="nav-logo">INNEX<span>.</span></div>
+      <div class="nav-sub">个人知识内化助手<br>PERSONAL KNOWLEDGE<br>INTERNALIZATION ASSISTANT</div>
+    </div>
+    <div class="nav-links">
+      <div class="nav-item active" id="nav-inbox" onclick="switchPage('inbox')">
+        <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/>
+          <path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/>
+        </svg>
+        <div class="nav-label">
+          <span class="nav-label-cn">收录箱</span>
+          <span class="nav-label-en">INBOX</span>
+        </div>
+      </div>
+      <div class="nav-item" id="nav-kb" onclick="switchPage('kb')">
+        <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>
+        </svg>
+        <div class="nav-label">
+          <span class="nav-label-cn">知识库</span>
+          <span class="nav-label-en">KNOWLEDGE BASE</span>
+        </div>
+      </div>
+      <div class="nav-item" id="nav-ai" onclick="switchPage('ai')">
+        <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+        </svg>
+        <div class="nav-label">
+          <span class="nav-label-cn">AI 助手</span>
+          <span class="nav-label-en">AI ASSISTANT</span>
+        </div>
+      </div>
+    </div>
+    <div class="nav-footer">
+      <div class="nav-footer-text">BUILDING KNOWLEDGE.<br>INTERNALIZING VALUE.</div>
+      <div class="nav-dots">
+        <div class="nav-dot" style="background:var(--accent)"></div>
+        <div class="nav-dot" style="background:var(--accent)"></div>
+        <div class="nav-dot" style="background:#2a2e2c"></div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- MAIN AREA -->
+  <div class="main-area">
+
+    <!-- ===== INBOX PAGE ===== -->
+    <div class="page page-inbox active" id="page-inbox">
+      <!-- Hero strip (with background art) -->
+      <div class="hero-strip hero-poster">
+        <div class="hero-user-name" id="hero-username">USER</div>
+      </div>
+
+      <!-- Page body -->
+      <div style="flex:1;overflow:hidden;background:var(--bg-panel);padding:8px 10px 0;display:flex;flex-direction:column;gap:14px;" id="inbox-body">
+
+        <!-- Quick Capture -->
+        <div>
+          <div class="section-header">
+            <div class="section-bar"></div>
+            <span class="section-title">快速录入</span>
+            <span class="section-title-en">QUICK CAPTURE</span>
+          </div>
+          <div class="quick-capture-card">
+            <div class="qc-fields">
+              <div>
+                <div class="qc-field-label">内容输入</div>
+                <textarea class="qc-textarea" id="qc-content" placeholder="粘贴链接 / 输入文本 / 粘贴图片 / 拖拽文件..." onkeydown="handleQcEnter(event)">https://www.notion.so/blog/ai-productivity-framework
+
+AI 生产力框架：信息捕获 → 结构化 → 内化 → 输出 → 复盘
+核心：建立可复用的知识闭环。</textarea>
+              </div>
+              <div>
+                <div class="qc-field-label">我的理解 <span style="color:var(--text-muted);font-weight:400;text-transform:none;font-size:10px;">（选填）</span></div>
+                <textarea class="qc-textarea" id="qc-note" placeholder="写下你对这条内容的理解，会用于后续内化...">这篇文章提出了一个很完整的 AI 生产力闭环，和 INNEX 的理念很契合。可以借鉴其中的"结构化与复盘"环节设计。</textarea>
+              </div>
+            </div>
+            <div class="qc-attachments" id="qc-attachments">
+              <button class="qc-attach-btn" onclick="addAttachDemo()">
+                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+                </svg>
+                添加附件
+              </button>
+              <div class="qc-attach-chip">
+                <span class="qc-attach-chip-icon">📄</span>
+                <span class="qc-attach-chip-name">AI生产力框架完整解读.pdf</span>
+                <span style="color:var(--text-muted);font-size:10px;">2.4 MB</span>
+                <button class="qc-attach-remove" onclick="this.parentElement.remove()">×</button>
+              </div>
+              <div class="qc-attach-chip">
+                <span class="qc-attach-chip-icon">🖼</span>
+                <span class="qc-attach-chip-name">框架流程图.png</span>
+                <span style="color:var(--text-muted);font-size:10px;">1.1 MB</span>
+                <button class="qc-attach-remove" onclick="this.parentElement.remove()">×</button>
+              </div>
+            </div>
+            <div class="qc-actions">
+              <div class="qc-status-btns">
+                <button class="qc-status-btn" id="btn-later" onclick="toggleStatus('later')">
+                  <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                  稍后看
+                </button>
+                <button class="qc-status-btn selected" id="btn-fav" onclick="toggleStatus('fav')">
+                  <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                  </svg>
+                  收藏
+                </button>
+              </div>
+              <button class="btn-primary" onclick="addRecord()">
+                添加记录
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Inbox list -->
+        <div style="flex:1;display:flex;flex-direction:column;min-height:0;">
+          <div class="inbox-card">
+            <div class="inbox-title-row">
+              <div class="section-bar" style="width:3px;height:14px;background:var(--accent);border-radius:2px;"></div>
+              <span class="inbox-title-cn">收录箱</span>
+              <span class="inbox-title-en">INBOX</span>
+              <div class="inbox-search-area">
+                <span class="inbox-search-icon">🔍</span>
+                <div class="search-wrap">
+                  <input class="inbox-search" id="inbox-search" placeholder="搜索标题、内容、标签、来源..." oninput="handleSearch(this.value)" onfocus="renderSearchSuggestions()">
+                  <div class="search-suggestions" id="search-suggestions"></div>
+                </div>
+              </div>
+            </div>
+            <div class="inbox-filters">
+              <div class="inbox-tabs">
+                <div class="inbox-tab active" data-tab="all" onclick="switchTab(this,'all')">全部 <span style="color:var(--text-muted)">(128)</span></div>
+                <div class="inbox-tab" data-tab="later" onclick="switchTab(this,'later')">稍后看 <span style="color:var(--text-muted)">(12)</span></div>
+                <div class="inbox-tab" data-tab="pending" onclick="switchTab(this,'pending')">待内化 <span style="color:var(--text-muted)">(23)</span></div>
+                <div class="inbox-tab" data-tab="done" onclick="switchTab(this,'done')">已沉淀 <span style="color:var(--text-muted)">(93)</span></div>
+              </div>
+              <button class="filter-btn">来源 <span>▾</span></button>
+              <button class="filter-btn">时间 <span>▾</span></button>
+              <button class="filter-btn">标签 <span>▾</span></button>
+              <button class="filter-btn" style="color:var(--text-muted);">○ 清空筛选</button>
+              <div class="filter-tag-chip" id="search-tag" style="display:none;">
+                搜索结果 <span class="filter-tag-remove" onclick="clearSearch()">×</span>
+              </div>
+            </div>
+            <div class="inbox-table-wrap">
+              <div class="inbox-table-head">
+                <table class="inbox-table">
+                  <thead>
+                    <tr>
+                      <th class="col-check"><input type="checkbox" class="cb" onchange="toggleAllRows(this)"></th>
+                      <th class="col-title">标题</th>
+                      <th class="col-source">来源</th>
+                      <th class="col-time" style="cursor:pointer" onclick="sortByTime()">收录时间 ↓</th>
+                      <th class="col-status">状态</th>
+                      <th class="col-tags">标签</th>
+                      <th class="col-actions">操作</th>
+                    </tr>
+                  </thead>
+                </table>
+              </div>
+              <div class="inbox-table-body">
+                <table class="inbox-table" id="inbox-table">
+                  <tbody id="inbox-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right drawer (inbox) -->
+      <div class="right-drawer" id="inbox-drawer">
+        <div class="drawer-inner" id="inbox-drawer-inner"></div>
+      </div>
+    </div>
+
+    <!-- ===== KNOWLEDGE BASE PAGE ===== -->
+    <div class="page page-kb" id="page-kb">
+      <div class="kb-layout">
+        <div class="kb-header">
+          <div class="kb-header-title">
+            <div class="section-bar"></div>
+            知识库
+            <span class="kb-header-en">KNOWLEDGE BASE</span>
+          </div>
+          <div class="kb-header-sub">以主题为核心，连接子主题与知识笔记，构建你的知识星球。</div>
+        </div>
+        <div class="kb-body">
+          <!-- Graph -->
+          <div class="kb-graph-area">
+            <!-- Legend -->
+            <div class="kb-legend">
+              <div class="legend-item"><div class="legend-dot" style="background:#c4580f;width:16px;height:16px;"></div> 主题（Theme）</div>
+              <div class="legend-item"><div class="legend-dot" style="background:rgba(100,140,200,0.8);"></div> 子主题（Sub-theme）</div>
+              <div class="legend-item"><div class="legend-dot" style="background:rgba(200,200,200,0.9);border:1.5px solid #aaa;width:9px;height:9px;"></div> 笔记（Note）</div>
+              <div class="legend-item"><div class="legend-line"></div> 结构关系（主题→子主题→笔记）</div>
+              <div class="legend-item"><div class="legend-dline"></div> 语义关系（笔记↔笔记）</div>
+            </div>
+
+            <!-- SVG Graph -->
+            <svg class="graph-svg" id="graph-svg" viewBox="0 0 900 600" preserveAspectRatio="xMidYMid meet">
+              <defs>
+                <filter id="glow-orange">
+                  <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+                  <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                </filter>
+                <filter id="glow-blue">
+                  <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                  <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                </filter>
+                <radialGradient id="bg-grad" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stop-color="#d4c9b5" stop-opacity="0.3"/>
+                  <stop offset="100%" stop-color="#1a1a14" stop-opacity="0.8"/>
+                </radialGradient>
+              </defs>
+
+              <!-- Background circle -->
+              <circle cx="450" cy="310" r="270" fill="url(#bg-grad)" stroke="rgba(232,93,26,0.08)" stroke-width="1"/>
+              <circle cx="450" cy="310" r="230" fill="none" stroke="rgba(232,93,26,0.05)" stroke-width="1"/>
+
+              <!-- Structural edges (solid) -->
+              <!-- AI生成模型 to sub-themes -->
+              <line x1="380" y1="145" x2="340" y2="230" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+              <line x1="380" y1="145" x2="420" y2="240" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+              <line x1="380" y1="145" x2="480" y2="220" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+              <line x1="380" y1="145" x2="520" y2="240" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+              <line x1="380" y1="145" x2="460" y2="260" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+
+              <!-- Agent设计 to sub-themes -->
+              <line x1="650" y1="200" x2="680" y2="280" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+              <line x1="650" y1="200" x2="720" y2="295" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+              <line x1="650" y1="200" x2="700" y2="320" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+
+              <!-- RAG实践 to sub-themes -->
+              <line x1="280" y1="370" x2="190" y2="310" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+              <line x1="280" y1="370" x2="180" y2="340" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+              <line x1="280" y1="370" x2="185" y2="370" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+              <line x1="280" y1="370" x2="190" y2="400" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+
+              <!-- 知识系统 to sub-themes -->
+              <line x1="640" y1="430" x2="720" y2="390" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+              <line x1="640" y1="430" x2="730" y2="420" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+              <line x1="640" y1="430" x2="720" y2="455" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+
+              <!-- 面试表达 to sub-themes -->
+              <line x1="365" y1="530" x2="295" y2="500" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+              <line x1="365" y1="530" x2="285" y2="530" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+
+              <!-- 个人成长 to sub-themes -->
+              <line x1="540" y1="530" x2="615" y2="490" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+              <line x1="540" y1="530" x2="625" y2="515" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+              <line x1="540" y1="530" x2="620" y2="545" stroke="#888" stroke-width="1.2" opacity="0.4"/>
+
+              <!-- Semantic edges (dashed) - cross notes -->
+              <line x1="720" y1="295" x2="615" y2="490" stroke="#c4580f" stroke-width="1" stroke-dasharray="5,4" opacity="0.35"/>
+              <line x1="680" y1="280" x2="730" y2="420" stroke="#c4580f" stroke-width="1" stroke-dasharray="5,4" opacity="0.3"/>
+              <line x1="190" y1="310" x2="720" y2="390" stroke="#c4580f" stroke-width="1" stroke-dasharray="5,4" opacity="0.25"/>
+
+              <!-- ===== THEME NODES ===== -->
+              <!-- AI生成模型 -->
+              <g class="graph-node" onclick="showKbDrawer('ai-gen')" transform="translate(380,145)">
+                <circle r="52" fill="#c4580f" opacity="0.9" filter="url(#glow-orange)"/>
+                <circle r="52" fill="none" stroke="rgba(255,140,60,0.5)" stroke-width="2"/>
+                <text y="-10" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="11" font-weight="700">AI生成模型</text>
+                <text y="8" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-family="var(--font-mono)" font-size="8">🧠</text>
+              </g>
+
+              <!-- Agent设计 -->
+              <g class="graph-node" onclick="showKbDrawer('agent')" transform="translate(650,200)">
+                <circle r="44" fill="#3a6080" opacity="0.9" filter="url(#glow-blue)"/>
+                <circle r="44" fill="none" stroke="rgba(100,180,240,0.4)" stroke-width="2"/>
+                <text y="-5" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="11" font-weight="700">Agent 设计</text>
+                <text y="10" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-family="var(--font-mono)" font-size="10">🤖</text>
+              </g>
+
+              <!-- RAG实践 -->
+              <g class="graph-node" onclick="showKbDrawer('rag')" transform="translate(280,370)">
+                <circle r="44" fill="#2a6040" opacity="0.9"/>
+                <circle r="44" fill="none" stroke="rgba(80,200,120,0.4)" stroke-width="2"/>
+                <text y="-5" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="11" font-weight="700">RAG 实践</text>
+                <text y="10" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-family="var(--font-mono)" font-size="10">🔍</text>
+              </g>
+
+              <!-- 知识系统 -->
+              <g class="graph-node" onclick="showKbDrawer('ks')" transform="translate(640,430)">
+                <circle r="44" fill="#7a5520" opacity="0.9"/>
+                <circle r="44" fill="none" stroke="rgba(200,150,60,0.4)" stroke-width="2"/>
+                <text y="-5" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="11" font-weight="700">知识系统</text>
+                <text y="10" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-family="var(--font-mono)" font-size="10">📦</text>
+              </g>
+
+              <!-- 面试表达 -->
+              <g class="graph-node" onclick="showKbDrawer('interview')" transform="translate(365,530)">
+                <circle r="40" fill="#6a3a70" opacity="0.9"/>
+                <circle r="40" fill="none" stroke="rgba(180,100,200,0.4)" stroke-width="2"/>
+                <text y="-4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="11" font-weight="700">面试表达</text>
+                <text y="10" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-family="var(--font-mono)" font-size="9">💬</text>
+              </g>
+
+              <!-- 个人成长 -->
+              <g class="graph-node" onclick="showKbDrawer('growth')" transform="translate(540,530)">
+                <circle r="40" fill="#7a2020" opacity="0.9"/>
+                <circle r="40" fill="none" stroke="rgba(220,80,80,0.4)" stroke-width="2"/>
+                <text y="-4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="11" font-weight="700">个人成长</text>
+                <text y="10" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-family="var(--font-mono)" font-size="9">🚀</text>
+              </g>
+
+              <!-- ===== SUB-THEME NODES (smaller circles) ===== -->
+              <!-- AI生成模型 sub-themes -->
+              <g class="graph-node" transform="translate(340,230)" onclick="showKbDrawer('agent')">
+                <circle r="20" fill="rgba(100,140,200,0.6)" stroke="rgba(150,190,240,0.5)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8.5" font-weight="600">成本与局限</text>
+              </g>
+              <g class="graph-node" transform="translate(430,235)" onclick="showKbDrawer('agent')">
+                <circle r="20" fill="rgba(100,140,200,0.6)" stroke="rgba(150,190,240,0.5)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8.5" font-weight="600">产品案例</text>
+              </g>
+              <g class="graph-node" transform="translate(490,215)" onclick="showKbDrawer('agent')">
+                <circle r="20" fill="rgba(100,140,200,0.6)" stroke="rgba(150,190,240,0.5)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8.5" font-weight="600">数据与分析</text>
+              </g>
+              <g class="graph-node" transform="translate(530,238)" onclick="showKbDrawer('agent')">
+                <circle r="18" fill="rgba(100,140,200,0.6)" stroke="rgba(150,190,240,0.5)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">AI能力应用</text>
+              </g>
+              <g class="graph-node" transform="translate(470,265)" onclick="showKbDrawer('agent')">
+                <circle r="18" fill="rgba(100,140,200,0.6)" stroke="rgba(150,190,240,0.5)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">增长与迭代</text>
+              </g>
+
+              <!-- Agent sub-themes -->
+              <g class="graph-node selected" id="node-agent-design" transform="translate(720,295)" onclick="showKbDrawer('note-021')">
+                <circle r="22" fill="rgba(232,93,26,0.8)" stroke="rgba(255,140,60,0.7)" stroke-width="2"/>
+                <text y="-3" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="7.5" font-weight="700">知识助手的核心</text>
+                <text y="8" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="7.5" font-weight="700">竞争力是持续...</text>
+              </g>
+              <g class="graph-node" transform="translate(715,310)" onclick="showKbDrawer('note-021')">
+                <!-- spacer, offset visually -->
+              </g>
+              <g class="graph-node" transform="translate(690,285)" onclick="showKbDrawer('agent')">
+                <circle r="18" fill="rgba(100,140,200,0.5)" stroke="rgba(150,190,240,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">能力设计</text>
+              </g>
+              <g class="graph-node" transform="translate(728,310)" onclick="showKbDrawer('agent')">
+                <circle r="18" fill="rgba(100,140,200,0.5)" stroke="rgba(150,190,240,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">协作模式</text>
+              </g>
+              <g class="graph-node" transform="translate(705,330)" onclick="showKbDrawer('agent')">
+                <circle r="18" fill="rgba(100,140,200,0.5)" stroke="rgba(150,190,240,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">评估与优化</text>
+              </g>
+
+              <!-- RAG sub-themes -->
+              <g class="graph-node" transform="translate(190,310)" onclick="showKbDrawer('rag')">
+                <circle r="18" fill="rgba(80,160,100,0.6)" stroke="rgba(100,200,130,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">检索优化</text>
+              </g>
+              <g class="graph-node" transform="translate(175,340)" onclick="showKbDrawer('rag')">
+                <circle r="18" fill="rgba(80,160,100,0.6)" stroke="rgba(100,200,130,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">向量数据库</text>
+              </g>
+              <g class="graph-node" transform="translate(180,372)" onclick="showKbDrawer('rag')">
+                <circle r="18" fill="rgba(80,160,100,0.6)" stroke="rgba(100,200,130,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">生成增强</text>
+              </g>
+              <g class="graph-node" transform="translate(185,402)" onclick="showKbDrawer('rag')">
+                <circle r="18" fill="rgba(80,160,100,0.6)" stroke="rgba(100,200,130,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">架构化表达</text>
+              </g>
+
+              <!-- Knowledge system sub-themes -->
+              <g class="graph-node" transform="translate(726,392)" onclick="showKbDrawer('ks')">
+                <circle r="18" fill="rgba(180,130,50,0.6)" stroke="rgba(220,170,80,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">知识模型</text>
+              </g>
+              <g class="graph-node" transform="translate(740,422)" onclick="showKbDrawer('ks')">
+                <circle r="18" fill="rgba(180,130,50,0.6)" stroke="rgba(220,170,80,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">知识组织</text>
+              </g>
+              <g class="graph-node" transform="translate(726,452)" onclick="showKbDrawer('ks')">
+                <circle r="18" fill="rgba(180,130,50,0.6)" stroke="rgba(220,170,80,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">知识输出</text>
+              </g>
+
+              <!-- 面试表达 sub-themes -->
+              <g class="graph-node" transform="translate(293,500)" onclick="showKbDrawer('interview')">
+                <circle r="16" fill="rgba(150,80,170,0.6)" stroke="rgba(190,120,210,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">项目复盘</text>
+              </g>
+              <g class="graph-node" transform="translate(280,530)" onclick="showKbDrawer('interview')">
+                <circle r="16" fill="rgba(150,80,170,0.6)" stroke="rgba(190,120,210,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">高频问题</text>
+              </g>
+
+              <!-- 个人成长 sub-themes -->
+              <g class="graph-node" transform="translate(620,490)" onclick="showKbDrawer('growth')">
+                <circle r="16" fill="rgba(180,60,60,0.6)" stroke="rgba(220,100,100,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">学习方法</text>
+              </g>
+              <g class="graph-node" transform="translate(634,516)" onclick="showKbDrawer('growth')">
+                <circle r="16" fill="rgba(180,60,60,0.6)" stroke="rgba(220,100,100,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">思维模型</text>
+              </g>
+              <g class="graph-node" transform="translate(620,545)" onclick="showKbDrawer('growth')">
+                <circle r="16" fill="rgba(180,60,60,0.6)" stroke="rgba(220,100,100,0.4)" stroke-width="1.5"/>
+                <text y="4" text-anchor="middle" fill="white" font-family="var(--font-body)" font-size="8" font-weight="600">时间管理</text>
+              </g>
+
+              <!-- Note dots -->
+              <circle cx="345" cy="250" r="5" fill="rgba(200,200,200,0.8)" stroke="#aaa" stroke-width="1" class="graph-node" onclick="showKbDrawer('note-021')"/>
+              <circle cx="440" cy="255" r="5" fill="rgba(200,200,200,0.8)" stroke="#aaa" stroke-width="1" class="graph-node"/>
+              <circle cx="500" cy="232" r="5" fill="rgba(200,200,200,0.8)" stroke="#aaa" stroke-width="1" class="graph-node"/>
+              <circle cx="535" cy="255" r="5" fill="rgba(200,200,200,0.8)" stroke="#aaa" stroke-width="1" class="graph-node"/>
+            </svg>
+
+            <!-- Controls -->
+            <div class="kb-controls">
+              <button class="kb-ctrl-btn">⊕</button>
+              <button class="kb-ctrl-btn">⊖</button>
+              <button class="kb-ctrl-btn">⊙ 适应视图</button>
+              <button class="kb-ctrl-btn">↺ 重置视图</button>
+            </div>
+
+            <!-- Interactions hint -->
+            <div class="kb-interactions">
+              <div class="kb-int-item" style="font-size:10px;color:var(--text-muted);">🖐 拖拽旋转</div>
+              <div class="kb-int-item" style="font-size:10px;color:var(--text-muted);">🖱 滚轮缩放</div>
+              <div class="kb-int-item" style="font-size:10px;color:var(--text-muted);">⬆ 悬停高亮</div>
+            </div>
+
+            <!-- Minimap -->
+            <div class="graph-minimap">
+              <svg width="120" height="80" viewBox="0 0 900 600" preserveAspectRatio="xMidYMid meet">
+                <circle cx="380" cy="145" r="20" fill="#c4580f" opacity="0.7"/>
+                <circle cx="650" cy="200" r="16" fill="#3a6080" opacity="0.7"/>
+                <circle cx="280" cy="370" r="16" fill="#2a6040" opacity="0.7"/>
+                <circle cx="640" cy="430" r="16" fill="#7a5520" opacity="0.7"/>
+                <circle cx="365" cy="530" r="14" fill="#6a3a70" opacity="0.7"/>
+                <circle cx="540" cy="530" r="14" fill="#7a2020" opacity="0.7"/>
+                <rect x="390" y="295" width="8" height="8" fill="rgba(255,120,40,0.8)" rx="1"/>
+              </svg>
+            </div>
+          </div>
+
+          <!-- KB right drawer -->
+          <div class="right-drawer" id="kb-drawer">
+            <div class="drawer-inner" id="kb-drawer-inner"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== AI ASSISTANT PAGE ===== -->
+    <div class="page page-ai" id="page-ai">
+      <div class="ai-layout">
+        <!-- History sidebar -->
+        <div class="ai-history">
+          <div class="ai-hist-top">
+            <button class="ai-new-btn" onclick="newChat()">+ 新建对话</button>
+            <input class="ai-hist-search" placeholder="搜索会话...">
+          </div>
+          <div class="ai-hist-list">
+            <div class="ai-hist-group">今天</div>
+            <div class="ai-hist-item active" onclick="loadChat(0)">
+              <span class="ai-hist-name">RAG 实验结果总结</span>
+              <span class="ai-hist-time">10:32</span>
+            </div>
+            <div class="ai-hist-item" onclick="loadChat(1)">
+              <span class="ai-hist-name">主题结构优化建议</span>
+              <span class="ai-hist-time">09:08</span>
+            </div>
+            <div class="ai-hist-group">昨天</div>
+            <div class="ai-hist-item" onclick="loadChat(2)">
+              <span class="ai-hist-name">面试改进整理</span>
+              <span class="ai-hist-time">17:41</span>
+            </div>
+            <div class="ai-hist-item" onclick="loadChat(3)">
+              <span class="ai-hist-name">OCR 问题排查</span>
+              <span class="ai-hist-time">14:22</span>
+            </div>
+            <div class="ai-hist-group">更早</div>
+            <div class="ai-hist-item" onclick="loadChat(4)">
+              <span class="ai-hist-name">知识图谱构建讨论</span>
+              <span class="ai-hist-time">05-11</span>
+            </div>
+            <div class="ai-hist-item" onclick="loadChat(5)">
+              <span class="ai-hist-name">内化学院设计</span>
+              <span class="ai-hist-time">05-09</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Main chat -->
+        <div class="ai-main">
+          <div class="ai-title-bar">
+            <div class="ai-title">
+              <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+              </svg>
+              AI 助手
+              <span class="ai-title-sub">/ AI ASSISTANT</span>
+            </div>
+          </div>
+
+          <div class="ai-messages" id="ai-messages"></div>
+
+          <div class="ai-input-area">
+            <div class="ai-input-row">
+              <textarea class="ai-input-box" id="ai-input" placeholder="只询问知识库中的内容；证据不足时会明确说明不确定..." rows="1" onkeydown="handleAiEnter(event)"></textarea>
+              <button class="ai-send-btn" onclick="sendAiMessage()">
+                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                  <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+              </button>
+            </div>
+            <div class="ai-input-tools">
+              <button class="ai-tool-btn" title="添加附件">+</button>
+              <span class="ai-hint">Shift + Enter 换行，Enter 发送</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI right drawer -->
+        <div class="right-drawer" id="ai-drawer">
+          <div class="drawer-inner" id="ai-drawer-inner"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ===== DATA =====
+const inboxData = [
+  { id:1, title:'AI 生产力框架：构建可持续的知识工作流', source:'网页收藏', domain:'notion.so', time:'05-14 10:23', status:'waiting', tags:['AI','生产力','框架'], actions:['view','promote','internalize','delete'] },
+  { id:2, title:'DeepSeek-R1 技术报告解读与思考', source:'PDF 上传', domain:'', time:'05-14 09:58', status:'done', tags:['AI','大模型','技术报告'], actions:['view','ask','locate','delete'] },
+  { id:3, title:'产品需求文档模板（通用版）', source:'手动输入', domain:'', time:'05-13 22:41', status:'pending', tags:['产品','需求','模板'], actions:['view','internalize','delete'] },
+  { id:4, title:'OCR 识别实践：扫描件 2026-05-13', source:'图片上传（OCR）', domain:'', time:'05-13 21:15', status:'pending', error:'解析失败：扫描件清晰度过低，暂未提取出有效文本', tags:['OCR','扫描件'], actions:['view','internalize','delete'] },
+  { id:5, title:'《复盘练习》读书笔记', source:'手动输入', domain:'', time:'05-13 20:02', status:'done', tags:['读书','方法论'], actions:['view','ask','locate','delete'] },
+  { id:6, title:'Notion AI 进阶整理记录', source:'网页收藏', domain:'notion.so', time:'05-13 18:47', status:'pending', tags:['Notion','AI','工具'], actions:['view','internalize','delete'] },
+  { id:7, title:'2026 年 AI 产品趋势报告（上）', source:'PDF 上传', domain:'', time:'05-13 16:30', status:'pending', tags:['AI','趋势','报告'], actions:['view','internalize','delete'] },
+  { id:8, title:'会议纪要：AI 应用规划讨论会', source:'手动输入', domain:'', time:'05-13 15:12', status:'done', tags:['会议纪要','规划'], actions:['view','ask','locate','delete'] },
+  { id:9, title:'Prompt 工程最佳实践清单', source:'网页收藏', domain:'medium.com', time:'05-13 13:05', status:'pending', tags:['Prompt','实践','工程'], actions:['view','internalize','delete'] },
+  { id:10, title:'如何高效阅读技术论文', source:'手动输入', domain:'', time:'05-13 11:48', status:'waiting', error:'内容过短，建议补充上下文后再内化', tags:['阅读','方法'], actions:['view','promote','internalize','delete'] },
+];
+
+const statusMap = {
+  waiting: { label:'稍后看', cls:'status-waiting' },
+  pending: { label:'待内化', cls:'status-pending' },
+  done: { label:'已沉淀', cls:'status-done' },
+};
+
+const actionLabels = {
+  view: { label:'查看原笔记', cls:'' },
+  promote: { label:'转待内化', cls:'' },
+  internalize: { label:'一键内化', cls:'primary-action' },
+  ask: { label:'基于此笔记提问', cls:'' },
+  locate: { label:'知识库定位', cls:'' },
+  reparse: { label:'重新识别', cls:'' },
+  viewraw: { label:'查看原图', cls:'' },
+  delete: { label:'删除', cls:'danger' },
+};
+
+// ===== RENDER INBOX =====
+function renderInbox(data) {
+  const tbody = document.getElementById('inbox-tbody');
+  tbody.innerHTML = '';
+  data.forEach(item => {
+    const tr = document.createElement('tr');
+    const s = statusMap[item.status] || statusMap.pending;
+    const actionsBtns = item.actions.map(a => {
+      const al = actionLabels[a];
+      return `<button class="row-action-btn ${al.cls}" onclick="handleAction(event,'${a}',${item.id})">${al.label}</button>`;
+    }).join('');
+    const errorMark = item.error ? `<span class="error-mark" data-tooltip="${item.error}">❗</span>` : '';
+    tr.innerHTML = `
+      <td class="col-check"><input type="checkbox" class="cb"></td>
+      <td class="col-title"><span class="row-title" onclick="openInboxDrawer(${item.id})" style="cursor:pointer">${item.title}${errorMark}</span></td>
+      <td class="col-source"><span class="source-badge">${item.source}</span>${item.domain ? `<br><span class="source-domain">${item.domain}</span>` : ''}</td>
+      <td class="col-time" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary)">${item.time}</td>
+      <td class="col-status"><span class="status-badge ${s.cls}">${s.label}</span></td>
+      <td class="col-tags">${item.tags.map(t=>`<span class="tag-chip">${t}</span>`).join('')}</td>
+      <td class="col-actions"><div class="row-actions">${actionsBtns}</div></td>
+    `;
+    tr.addEventListener('click', (e) => {
+      if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+      openInboxDrawer(item.id);
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+let currentTab = 'all';
+let searchQuery = '';
+
+function switchTab(el, tab) {
+  document.querySelectorAll('.inbox-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  currentTab = tab;
+  filterInbox();
+}
+
+function filterInbox() {
+  let data = [...inboxData];
+  if (currentTab === 'later') data = data.filter(d => d.status === 'waiting');
+  if (currentTab === 'pending') data = data.filter(d => d.status === 'pending');
+  if (currentTab === 'done') data = data.filter(d => d.status === 'done');
+  if (searchQuery) {
+    data = data.filter(d =>
+      d.title.toLowerCase().includes(searchQuery) ||
+      d.tags.some(t => t.toLowerCase().includes(searchQuery)) ||
+      d.source.toLowerCase().includes(searchQuery)
+    );
+  }
+  renderInbox(data);
+}
+
+function handleSearch(val) {
+  searchQuery = val.toLowerCase();
+  const tag = document.getElementById('search-tag');
+  if (searchQuery) { tag.style.display = 'flex'; }
+  else { tag.style.display = 'none'; }
+  renderSearchSuggestions();
+  filterInbox();
+}
+
+function renderSearchSuggestions() {
+  const box = document.getElementById('search-suggestions');
+  if (!box) return;
+  if (!searchQuery) {
+    box.classList.remove('open');
+    box.innerHTML = '';
+    return;
+  }
+  const matches = inboxData.filter(d =>
+    d.title.toLowerCase().includes(searchQuery) ||
+    d.tags.some(t => t.toLowerCase().includes(searchQuery)) ||
+    d.source.toLowerCase().includes(searchQuery)
+  ).slice(0, 5);
+  box.innerHTML = matches.map((d, i) => `
+    <div class="search-suggestion-item" data-suggestion-index="${i}">
+      ${d.title}
+      <span class="search-suggestion-meta">${d.source} · ${statusMap[d.status].label} · ${d.tags.join(' / ')}</span>
+    </div>
+  `).join('');
+  box._suggestions = matches;
+  box.classList.toggle('open', matches.length > 0);
+}
+
+function selectSearchSuggestion(title) {
+  document.getElementById('inbox-search').value = title;
+  searchQuery = title.toLowerCase();
+  document.getElementById('search-tag').style.display = 'flex';
+  document.getElementById('search-suggestions').classList.remove('open');
+  filterInbox();
+}
+
+function clearSearch() {
+  document.getElementById('inbox-search').value = '';
+  searchQuery = '';
+  document.getElementById('search-tag').style.display = 'none';
+  document.getElementById('search-suggestions')?.classList.remove('open');
+  filterInbox();
+}
+
+function toggleAllRows(cb) {
+  document.querySelectorAll('#inbox-tbody input[type=checkbox]').forEach(c => c.checked = cb.checked);
+}
+
+let sortAsc = false;
+function sortByTime() {
+  sortAsc = !sortAsc;
+  inboxData.sort((a, b) => {
+    const [am, ad, ah, amin] = a.time.split(/[\s:-]/);
+    const [bm, bd, bh, bmin] = b.time.split(/[\s:-]/);
+    const da = new Date(2026, am - 1, ad, ah || 0, amin || 0);
+    const db = new Date(2026, bm - 1, bd, bh || 0, bmin || 0);
+    return sortAsc ? da - db : db - da;
+  });
+  filterInbox();
+}
+
+function handleAction(e, action, id) {
+  e.stopPropagation();
+  if (action === 'delete') {
+    if (confirm('确认删除这条记录？')) {
+      const idx = inboxData.findIndex(d => d.id === id);
+      if (idx > -1) { inboxData.splice(idx,1); filterInbox(); }
+    }
+    return;
+  }
+  if (action === 'promote') {
+    updateRecordStatus(id, 'pending');
+    return;
+  }
+  if (action === 'view') { viewOriginal(id); return; }
+  if (action === 'ask') { openNoteQuestionDrawer('inbox'); return; }
+  if (action === 'locate') { locateInKnowledgeBase(); return; }
+  if (action === 'internalize') { openInboxDrawer(id, 'internalize'); return; }
+  openInboxDrawer(id);
+}
+
+function updateRecordStatus(id, status) {
+  const item = inboxData.find(d => d.id === id);
+  if (!item) return;
+  item.status = status;
+  item.actions = status === 'done'
+    ? ['view','ask','locate','delete']
+    : status === 'pending'
+      ? ['view','internalize','delete']
+      : ['view','promote','internalize','delete'];
+  filterInbox();
+  openInboxDrawer(id);
+}
+
+// ===== INBOX DRAWER =====
+function openInboxDrawer(id, mode) {
+  const item = inboxData.find(d => d.id === id);
+  if (!item) return;
+  const drawer = document.getElementById('inbox-drawer');
+  const inner = document.getElementById('inbox-drawer-inner');
+  const s = statusMap[item.status] || statusMap.pending;
+
+  let actionsHtml = '';
+  let actionsClass = 'drawer-actions';
+  if (item.status === 'waiting') {
+    actionsHtml = `<button class="drawer-action-btn" onclick="viewOriginal(${id})">查看原笔记</button><button class="drawer-action-btn" onclick="updateRecordStatus(${id},'pending')">转待内化</button><button class="drawer-action-btn primary" onclick="showInternalizationDraft(${id})">一键内化</button><button class="drawer-action-btn danger" onclick="deleteRecord(${id})">删除</button>`;
+  } else if (item.status === 'pending') {
+    actionsHtml = `<button class="drawer-action-btn" onclick="viewOriginal(${id})">查看原笔记</button><button class="drawer-action-btn primary" onclick="showInternalizationDraft(${id})">一键内化</button><button class="drawer-action-btn danger" onclick="deleteRecord(${id})">删除</button>`;
+  } else if (item.status === 'done') {
+    actionsHtml = `<button class="drawer-action-btn" onclick="viewOriginal(${id})">查看原笔记</button><button class="drawer-action-btn" onclick="openNoteQuestionDrawer('inbox','question-from-inbox-note',${id})">基于此笔记提问</button><button class="drawer-action-btn" onclick="locateInKnowledgeBase()">知识库定位</button><button class="drawer-action-btn danger" onclick="deleteRecord(${id})">删除</button>`;
+    actionsClass = 'drawer-actions two-row';
+  } else {
+    actionsHtml = `<button class="drawer-action-btn" onclick="viewOriginal(${id})">查看原笔记</button><button class="drawer-action-btn danger" onclick="deleteRecord(${id})">删除</button>`;
+  }
+
+  if (mode === 'internalize') {
+    showInternalizationDraft(id);
+    return;
+  }
+
+  const noteDetailBtn = (item.status === 'done') ? `<div style="margin-top:12px;padding:12px;background:var(--bg-card);border-radius:8px;border:1px solid var(--border-light);">
+    <div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">AI笔记</div>
+    <div style="font-size:12px;color:var(--accent);cursor:pointer;font-weight:500;" onclick="openAiNoteFromInboxDetail(${id})">note-021 · 知识助手的核心竞争力是持续内化与复用 →</div>
+  </div>` : '';
+
+  inner.innerHTML = `
+    <div class="drawer-header">
+      <div class="drawer-title">记录详情</div>
+      <button class="drawer-close" onclick="closeDrawer('inbox')">×</button>
+    </div>
+    <div class="drawer-section">
+      <div class="drawer-field"><div class="drawer-field-label">标题</div><div class="drawer-field-value" style="font-weight:600">${item.title}</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">来源</div><div class="drawer-field-value">${item.source}${item.domain ? ' · ' + item.domain : ''}</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">收录时间</div><div class="drawer-field-value" style="font-family:var(--font-mono);font-size:11px">2026-${item.time}</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">状态</div><div class="drawer-field-value"><span class="status-badge ${s.cls}">${s.label}</span></div></div>
+      <div class="drawer-field"><div class="drawer-field-label">标签</div><div class="drawer-field-value">${item.tags.map(t=>`<span class="tag-chip">${t}</span>`).join('')}</div></div>
+    </div>
+    <div class="drawer-section">
+      <div class="drawer-section-title">摘要</div>
+      <div class="drawer-body-text">收录内容摘要：该条记录来自${item.source}，涉及主题包括${item.tags.join('、')}等。系统已自动提取核心概念，待内化后生成结构化笔记。</div>
+    </div>
+    <div class="drawer-section">
+      <div class="drawer-section-title">我的理解</div>
+      <textarea class="drawer-editable-area js-understanding-input" placeholder="写下你对这条记录的理解，双击可编辑...">这条记录与我正在整理的知识体系高度相关，可以作为核心案例使用。</textarea>
+      <div style="display:flex;justify-content:flex-end;margin-top:6px">
+        <button class="btn-primary js-understanding-save" style="padding:5px 12px;font-size:11px;display:none">保存</button>
+      </div>
+    </div>
+    <div class="drawer-section">
+      <div class="drawer-section-title">附件</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <div class="qc-attach-chip"><span>📄</span><span>原始内容.pdf</span></div>
+        <button class="qc-attach-btn">+ 添加附件</button>
+      </div>
+      <div style="font-size:11px;color:${item.error?'#ef4444':'var(--text-muted)'};margin-top:6px">解析状态：${item.error || '正常'}</div>
+    </div>
+    ${noteDetailBtn}
+    <div style="flex:1"></div>
+    <div class="${actionsClass}">${actionsHtml}</div>
+  `;
+  bindUnderstandingSave(inner);
+  drawer.classList.add('open');
+  document.body.classList.add('inbox-drawer-open');
+  closeCalendar();
+}
+
+function showInternalizationDraft(id) {
+  const item = inboxData.find(d => d.id === id);
+  if (!item) return;
+  const drawer = document.getElementById('inbox-drawer');
+  const inner = document.getElementById('inbox-drawer-inner');
+  inner.innerHTML = `
+    <div class="drawer-header">
+      <div class="drawer-title">内化草稿</div>
+      <button class="drawer-close" onclick="closeDrawer('inbox')">×</button>
+    </div>
+    <div class="drawer-section">
+      <div class="drawer-body-text">已生成 AI 笔记草稿。你可以直接修改正文，确认后保存即可。</div>
+    </div>
+    <div class="drawer-section">
+      <div class="drawer-section-title">AI 笔记正文</div>
+      <textarea class="drawer-editable-area" style="min-height:280px">这条内容的核心提醒是：知识助手的长期价值，不在于一次性回答问题，而在于把用户持续输入的内容转化为可复用、可追溯的知识资产。
+
+从产品角度看，如果系统只强调即时问答能力，它很容易被通用模型替代；但如果它能够沉淀用户理解、维护知识状态、支持回写闭环，就会形成真正的个人知识系统。
+
+这条结论可直接用于产品定位表达：强调“输入变资产”，而不是只强调“回答问题”。在产品方案、竞品分析和复盘场景中都可以复用。</textarea>
+    </div>
+    <div class="drawer-actions draft-actions-fixed">
+      <button class="drawer-action-btn" onclick="openInboxDrawer(${id})">返回详情</button>
+      <button class="drawer-action-btn primary" onclick="saveInternalization(${id})">保存</button>
+    </div>
+  `;
+  drawer.classList.add('open');
+  document.body.classList.add('inbox-drawer-open');
+  closeCalendar();
+}
+
+function saveInternalization(id) {
+  updateRecordStatus(id, 'done');
+  showNoteDetail(id);
+}
+
+function deleteRecord(id) {
+  const idx = inboxData.findIndex(d => d.id === id);
+  if (idx > -1) {
+    inboxData.splice(idx, 1);
+    filterInbox();
+    closeDrawer('inbox');
+  }
+}
+
+function viewOriginal(id) {
+  const item = inboxData.find(d => d.id === id);
+  if (!item) return;
+  if (item.source === '网页收藏' && item.domain) {
+    const url = /^https?:\/\//.test(item.domain) ? item.domain : `https://${item.domain}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  alert(`原始记录：\n\n${item.title}\n\n来源：${item.source}${item.domain ? ` (${item.domain})` : ''}`);
+}
+
+let drawerBackStack = [];
+
+function setDrawerBackState(state) {
+  if (!state) return;
+  drawerBackStack.push(state);
+}
+
+function goDrawerBack() {
+  const state = drawerBackStack.pop();
+  if (!state) return;
+  if (state.type === 'kb-from-inbox-note') {
+    switchPage('inbox');
+    setTimeout(() => showNoteDetail(state.id || 2, false), 60);
+    return;
+  }
+  if (state.type === 'inbox-from-kb-note') {
+    switchPage('kb');
+    setTimeout(() => showKbDrawer('note-021', false), 60);
+    return;
+  }
+  if (state.type === 'question-from-inbox-note') {
+    showNoteDetail(state.id || 2, false);
+    return;
+  }
+  if (state.type === 'question-from-kb-note') {
+    showKbDrawer('note-021', false);
+    return;
+  }
+  if (state.type === 'inbox-detail-from-ai-note') {
+    openInboxDrawer(state.id || 2);
+    return;
+  }
+}
+
+function openAiNoteFromInboxDetail(id) {
+  setDrawerBackState({ type: 'inbox-detail-from-ai-note', id });
+  showNoteDetail(id, true);
+}
+
+function locateInKnowledgeBase(fromId = 2) {
+  setDrawerBackState({ type: 'kb-from-inbox-note', id: fromId });
+  switchPage('kb');
+  setTimeout(() => showKbDrawer('note-021', true), 50);
+}
+
+function openKbAiNote(noteId) {
+  const targetId = noteId === 'note-021' ? 2 : 2;
+  setDrawerBackState({ type: 'inbox-from-kb-note' });
+  switchPage('inbox');
+  setTimeout(() => showNoteDetail(targetId, true), 50);
+}
+
+function deleteRecordFromKb(id) {
+  deleteRecord(id);
+  closeDrawer('kb');
+}
+
+function showNoteDetail(id, showBack = false) {
+  const inner = document.getElementById('inbox-drawer-inner');
+  inner.innerHTML = `
+    <div class="drawer-header">
+      <div class="drawer-title">笔记详情</div>
+      <div class="drawer-header-actions">
+        ${showBack ? '<button class="drawer-back" onclick="goDrawerBack()">←</button>' : ''}
+        <button class="drawer-close" onclick="closeDrawer('inbox')">×</button>
+      </div>
+    </div>
+    <div class="drawer-section">
+      <div class="drawer-field"><div class="drawer-field-label">标题</div><div class="drawer-field-value" style="font-weight:600">知识助手的核心竞争力是持续内化与复用</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">主题</div><div class="drawer-field-value">AI 产品经理</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">子主题</div><div class="drawer-field-value">Agent 设计</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">来源记录</div><div class="drawer-field-value" style="color:var(--accent)">Agent 设计灵感：知识助手不等于聊天机器人</div></div>
+    </div>
+    <div class="drawer-section">
+      <div class="drawer-section-title">AI 笔记正文</div>
+      <div class="note-body-list">
+        <div class="note-body-item" data-num="1">知识助手的长期价值，不在于"像 ChatGPT 一样回答问题"，而在于能把用户不断输入的材料，持续整理成可复用、可连接、可追溯的知识资产。</div>
+        <div class="note-body-item" data-num="2">这条笔记真正提醒我的，是知识产品不能只强调搜索或问答。如果系统只能临时回答，它很容易被更强的通用模型替代；但如果它能维护知识状态、记录用户理解、形成回写闭环，它才会越来越像"用户自己的系统"。</div>
+        <div class="note-body-item" data-num="3">放到产品表达里，这条结论可以直接复用：讲知识助手时，应优先强调"输入如何变成资产"，而不是只讲"能不能回答"。</div>
+        <div class="note-body-item" data-num="4">可用于：产品方案、面试表达、竞品分析、知识库定位。</div>
+      </div>
+    </div>
+    <div class="drawer-section">
+      <div class="drawer-section-title">相关追问</div>
+      <div class="related-question">为什么知识状态管理比纯收藏更重要？</div>
+      <div class="related-question">如何设计回写闭环而不打扰用户？</div>
+    </div>
+    <div class="drawer-section">
+      <div class="drawer-section-title">引用依据</div>
+      <div class="quote-block">"助手的价值来自持续整理与回写，而不是一次性回答。"</div>
+    </div>
+    <div style="flex:1"></div>
+    <div class="drawer-actions">
+      <button class="drawer-action-btn" onclick="viewOriginal(${id})">查看原笔记</button>
+      <button class="drawer-action-btn primary" onclick="openNoteQuestionDrawer('inbox','question-from-inbox-note',${id})">基于此笔记提问</button>
+      <button class="drawer-action-btn" onclick="locateInKnowledgeBase(${id})">在知识库定位</button>
+      <button class="drawer-action-btn danger" onclick="deleteRecord(${id})">删除</button>
+    </div>
+  `;
+  document.getElementById('inbox-drawer').classList.add('open');
+  document.body.classList.add('inbox-drawer-open');
+  closeCalendar();
+}
+
+function openNoteQuestionDrawer(which, backType = '', backId = 2) {
+  const drawer = document.getElementById(which + '-drawer');
+  const inner = document.getElementById(which + '-drawer-inner');
+  if (!drawer || !inner) return;
+  if (backType) setDrawerBackState({ type: backType, id: backId });
+
+  const msgId = `${which}-question-messages`;
+  const inputId = `${which}-question-input`;
+  const sendFn = `sendDrawerAiMessage('${which}')`;
+  const enterFn = `handleDrawerAiEnter(event,'${which}')`;
+
+  inner.innerHTML = `
+    <div class="drawer-header">
+      <div class="drawer-title">基于此笔记提问</div>
+      <div class="drawer-header-actions">
+        ${backType ? '<button class="drawer-back" onclick="goDrawerBack()">←</button>' : ''}
+        <button class="drawer-close" onclick="closeDrawer('${which}')">×</button>
+      </div>
+    </div>
+    <div class="drawer-section">
+      <div class="drawer-section-title">已挂载上下文</div>
+      <div class="drawer-body-text">note-021 · 知识助手的核心竞争力是持续内化与复用</div>
+    </div>
+    <div class="ai-messages" id="${msgId}" style="flex:1;min-height:260px;max-height:none;padding-right:2px;"></div>
+    <div class="ai-input-area" style="padding:10px 0 0;">
+      <div class="ai-input-row">
+        <textarea class="ai-input-box" id="${inputId}" placeholder="只询问知识库中的内容；证据不足时会明确说明不确定..." rows="1" onkeydown="${enterFn}"></textarea>
+        <button class="ai-send-btn" onclick="${sendFn}">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </div>
+      <div class="ai-input-tools">
+        <button class="ai-tool-btn" title="添加附件">+</button>
+        <span class="ai-hint">Shift + Enter 换行，Enter 发送</span>
+      </div>
+    </div>
+  `;
+
+  drawerQuestionData[which] = [
+    { role: 'assistant', time: new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}), text: '已挂载这条笔记上下文。你可以直接追问，我会基于知识库给出有依据的回答。' }
+  ];
+  renderDrawerAiMessages(which);
+
+  drawer.classList.add('open');
+  document.body.classList.add('inbox-drawer-open');
+}
+
+const drawerQuestionData = {};
+
+function renderDrawerAiMessages(which) {
+  const container = document.getElementById(`${which}-question-messages`);
+  if (!container) return;
+  const data = drawerQuestionData[which] || [];
+  container.innerHTML = '';
+  data.forEach(msg => {
+    const div = document.createElement('div');
+    div.className = `ai-msg ${msg.role}`;
+    const avatar = `<div class="ai-avatar ${msg.role}">${msg.role === 'assistant' ? 'AI' : '你'}</div>`;
+    const textFormatted = String(msg.text || '').replace(/\n/g, '<br>');
+    div.innerHTML = avatar + `
+      <div class="ai-bubble">
+        <div class="ai-bubble-time">${msg.time || ''}</div>
+        <div class="ai-bubble-text">${textFormatted}</div>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+  container.scrollTop = container.scrollHeight;
+}
+
+function handleDrawerAiEnter(e, which) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendDrawerAiMessage(which);
+  }
+}
+
+function sendDrawerAiMessage(which) {
+  const input = document.getElementById(`${which}-question-input`);
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  const now = new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+  if (!drawerQuestionData[which]) drawerQuestionData[which] = [];
+  drawerQuestionData[which].push({ role:'user', time: now, text });
+  renderDrawerAiMessages(which);
+  input.value = '';
+
+  setTimeout(() => {
+    const t = new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+    drawerQuestionData[which].push({
+      role:'assistant',
+      time: t,
+      text:'基于当前知识库，这个问题可回答的部分是：这条笔记支持“输入变资产”的定位表达。若要做更强结论，还需要补充竞品样本与用户验证记录。'
+    });
+    renderDrawerAiMessages(which);
+  }, 500);
+}
+
+function closeDrawer(which) {
+  document.getElementById(which+'-drawer').classList.remove('open');
+  if (which === 'inbox' || which === 'kb') {
+    document.body.classList.remove('inbox-drawer-open');
+  }
+}
+
+function openDrawer(status) {
+  closeInfoModal();
+  switchPage('inbox');
+  const items = inboxData.filter(d => d.status === status);
+  if (items.length) { setTimeout(() => openInboxDrawer(items[0].id), 100); }
+}
+
+function openContextNoteDrawer(id) {
+  closeInfoModal();
+  const current = document.querySelector('.page.active')?.id?.replace('page-', '') || 'inbox';
+  if (current === 'kb') {
+    showKbDrawer('note-021');
+  } else if (current === 'ai') {
+    openAiDrawer();
+  } else {
+    openInboxDrawer(id);
+  }
+}
+
+function jumpToInboxFilter(tab) {
+  closeInfoModal();
+  switchPage('inbox');
+  const tabEl = document.querySelector(`.inbox-tab[data-tab="${tab}"]`);
+  if (tabEl) switchTab(tabEl, tab);
+}
+
+// ===== KB DRAWER =====
+function showKbDrawer(type, showBack = false, drawerName = 'kb') {
+  const drawer = document.getElementById(drawerName + '-drawer');
+  const inner = document.getElementById(drawerName + '-drawer-inner');
+  if (!drawer || !inner) return;
+
+  const deleteFn = drawerName === 'ai' ? `deleteRecord(2)` : `deleteRecordFromKb(2)`;
+
+  if (type === 'note-021') {
+    inner.innerHTML = `
+      <div class=”kb-note-fixed-top”>
+        <div class=”drawer-header”>
+          <div class=”drawer-title”>笔记详情</div>
+          <div class=”drawer-header-actions”>
+            ${showBack ? '<button class=”drawer-back” onclick=”goDrawerBack()”>←</button>' : ''}
+            <button class=”drawer-close” onclick=”closeDrawer('${drawerName}')”>×</button>
+          </div>
+        </div>
+        <div class=”drawer-section”>
+          <div class=”drawer-field”><div class=”drawer-field-label”>标题</div><div class=”drawer-field-value” style=”font-weight:600”>知识助手的核心竞争力是持续内化与复用</div></div>
+          <div class=”drawer-field”><div class=”drawer-field-label”>主题</div><div class=”drawer-field-value”>AI 产品经理</div></div>
+          <div class=”drawer-field”><div class=”drawer-field-label”>子主题</div><div class=”drawer-field-value”>Agent 设计</div></div>
+          <div class=”drawer-field”><div class=”drawer-field-label”>来源记录</div><div class=”drawer-field-value” style=”color:var(--accent)”>Agent 设计灵感：知识助手不等于聊天机器人</div></div>
+        </div>
+      </div>
+      <div class=”kb-note-scroll”>
+      <div class=”drawer-section”>
+        <div class=”drawer-section-title”>摘要</div>
+        <div class=”drawer-body-text”>这条笔记强调知识助手的核心价值是持续内化与回写，不是一次性问答。系统应把用户输入逐步转化为可复用知识资产。</div>
+      </div>
+      <div class=”drawer-section”>
+        <div class=”drawer-section-title”>我的理解</div>
+        <textarea class=”drawer-editable-area js-understanding-input” placeholder=”写下你的理解...”>真正的差异不在回答能力本身，而在于能否形成”输入-整理-沉淀-复用”的闭环，这也是产品长期壁垒。</textarea>
+        <div style=”display:flex;justify-content:flex-end;margin-top:6px”>
+          <button class=”btn-primary js-understanding-save” style=”padding:5px 12px;font-size:11px;display:none”>保存</button>
+        </div>
+      </div>
+      <div class=”drawer-section”>
+        <div class=”drawer-section-title”>附件</div>
+        <div style=”display:flex;align-items:center;gap:8px;flex-wrap:wrap;”>
+          <div class=”qc-attach-chip”><span>📄</span><span>原始记录摘录.md</span></div>
+          <div class=”qc-attach-chip”><span>🖼</span><span>结构示意图.png</span></div>
+          <button class=”qc-attach-btn”>+ 添加附件</button>
+        </div>
+      </div>
+      <div class=”drawer-section”>
+        <div class=”drawer-section-title”>AI 笔记正文</div>
+        <div class=”note-body-list”>
+          <div class=”note-body-item” data-num=”1”>知识助手的长期价值，不在于像 ChatGPT 一样回答问题，而在于能把用户不断输入的材料，持续整理成可复用、可连接、可追溯的知识资产。</div>
+          <div class=”note-body-item” data-num=”2”>这条笔记真正提醒我的是，知识产品不能只强调搜索或问答。如果系统只能临时回答，它很容易被更强的通用模型替代；但如果它能维护知识状态、记录用户理解、形成回写闭环，它才会越来越像”用户自己的系统”。</div>
+          <div class=”note-body-item” data-num=”3”>放到产品表达里，这条结论可以直接复用：讲知识助手时，应优先强调”输入如何变成资产”，而不是只讲”能不能回答”。</div>
+          <div class=”note-body-item” data-num=”4”>可用于：产品方案、面试表达、竞品分析、知识库定位。</div>
+        </div>
+      </div>
+      <div class=”drawer-section”>
+        <div class=”drawer-section-title”>相关追问</div>
+        <div class=”related-question”>为什么知识状态管理比纯收藏更重要？</div>
+        <div class=”related-question”>如何设计回写闭环而不打扰用户？</div>
+      </div>
+      <div class=”drawer-section”>
+        <div class=”drawer-section-title”>引用依据</div>
+        <div class=”quote-block”>”助手的价值来自持续整理与回写，而不是一次性回答。”</div>
+      </div>
+      <div class=”drawer-section”>
+        <div class=”drawer-section-title”>关联笔记</div>
+        <div class=”drawer-related-list”>
+          <div class=”drawer-related-item” onclick=”showKbDrawer('note-021')”><span class=”drawer-related-note”>[note-014] Transformer 笔记：长上下文…</span><span class=”drawer-related-type”>补充</span></div>
+          <div class=”drawer-related-item” onclick=”showKbDrawer('note-021')”><span class=”drawer-related-note”>[note-037] RAG 实验复盘</span><span class=”drawer-related-type”>对比</span></div>
+          <div class=”drawer-related-item” onclick=”showKbDrawer('note-021')”><span class=”drawer-related-note”>[note-045] 知识回写闭环设计</span><span class=”drawer-related-type”>延伸</span></div>
+          <div class=”drawer-related-item” onclick=”showKbDrawer('note-021')”><span class=”drawer-related-note”>[note-066] 只做聊天的助手方案</span><span class=”drawer-related-type”>反例</span></div>
+          <div class=”drawer-related-item” onclick=”showKbDrawer('note-021')”><span class=”drawer-related-note”>[note-103] 面试表达模板</span><span class=”drawer-related-type”>应用</span></div>
+        </div>
+        <div style=”font-size:10px;color:var(--text-muted);margin-top:8px;line-height:1.6”>点击任一关联笔记 → 直接切到该笔记详情；左侧星图同步切换为该笔记选中并高亮关联。</div>
+      </div>
+      </div>
+      <div class=”drawer-actions kb-note-fixed-actions”>
+        <button class=”drawer-action-btn” onclick=”viewOriginal(2)”>查看原笔记</button>
+        <button class=”drawer-action-btn primary” onclick=”openNoteQuestionDrawer('${drawerName}','question-from-kb-note',2)”>基于此笔记提问</button>
+        <button class=”drawer-action-btn danger” onclick=”${deleteFn}”>删除</button>
+      </div>
+    `;
+  } else {
+    const titles = { 'ai-gen':'AI生成模型', agent:'Agent 设计', rag:'RAG 实践', ks:'知识系统', interview:'面试表达', growth:'个人成长' };
+    inner.innerHTML = `
+      <div class=”drawer-header”>
+        <div class=”drawer-title”>主题：${titles[type]||type}</div>
+        <button class=”drawer-close” onclick=”closeDrawer('${drawerName}')”>×</button>
+      </div>
+      <div class=”drawer-section”>
+        <div class=”drawer-body-text”>该主题下共包含 ${Math.floor(Math.random()*15+5)} 条已内化笔记，${Math.floor(Math.random()*4+2)} 个子主题。点击各子主题节点查看笔记详情。</div>
+      </div>
+      <div style=”flex:1”></div>
+      <div class=”drawer-actions”>
+        <button class=”drawer-action-btn”>重命名</button>
+        <button class=”drawer-action-btn primary” onclick=”openNoteQuestionDrawer('${drawerName}')”>基于此主题提问</button>
+      </div>
+    `;
+  }
+  bindUnderstandingSave(inner);
+  drawer.classList.add('open');
+  document.body.classList.add('inbox-drawer-open');
+}
+
+function bindUnderstandingSave(container) {
+  if (!container) return;
+  const input = container.querySelector('.js-understanding-input');
+  const saveBtn = container.querySelector('.js-understanding-save');
+  if (!input || !saveBtn) return;
+  const normalize = (v) => String(v || '').replace(/\r\n/g, '\n').trim();
+  let baseline = normalize(input.value);
+
+  const sync = () => {
+    const changed = normalize(input.value) !== baseline;
+    saveBtn.style.display = changed ? 'inline-flex' : 'none';
+  };
+
+  input.addEventListener('input', sync);
+  saveBtn.addEventListener('click', () => {
+    baseline = normalize(input.value);
+    sync();
+  });
+  sync();
+}
+
+// ===== AI ASSISTANT =====
+const chatData = [
+  {
+    role: 'user', time: '10:32',
+    text: '帮我总结这周 RAG 实验的结果和关键结论。'
+  },
+  {
+    role: 'assistant', time: '10:32',
+    text: '本周围绕 RAG 的召回与重排路进行了系统实验，主要对比不同检索策略与重排模型在事实型问答任务上的表现。\n\n整体结论：采用 BM25 + 向量混合检索结合 rerank-v2 重排，在召回与准确率方面取得更优平衡，且计算成本可控。\n\n关键结论：\n• 混合检索（BM25+向量）相比单一检索，Top-20 召回率提升约 12%。\n• rerank-v2 相比 rerank-v1，在问答格式（Answerable）上提升约 18%。\n• 首答引用准确率提升约 15%，幻觉率下降 6%。',
+    refs: [
+      { name:'RAG 实验记录 A', src:'Notion · 05-14 10:12' },
+      { name:'向量检索对比笔记', src:'手动输入 · 05-13 22:48' },
+      { name:'note-03 检索策略复盘', src:'AI笔记 · 05-12 19:20' },
+    ]
+  },
+  {
+    role: 'user', time: '10:35',
+    text: '不同的分解器对长文档生成质量的影响如何？'
+  },
+  {
+    role: 'assistant', time: '10:35',
+    text: '针对长文档场景测试了三种切分策略：固定长度、语义边界、混合（长度+语义重叠），结果显示，语义边界切分在避免跨段信息割裂上表现最佳，能显著降低重叠丢失率与重复比例。\n\n• 语义边界切分相比固定长度，生成质量的显著性提升约 16%。\n• 混合策略在平均检索命中率增加约 8% 的同时，重复率提升 11%。\n• 建议在需要高质量输出的场景优先采用语义边界切分，在高吞吐场景采用混合策略。',
+    refs: [
+      { name:'长文档切分策略评估', src:'Notion · 05-11 14:30' },
+      { name:'RAG 实验记录 A', src:'Notion · 05-14 10:12' },
+    ]
+  },
+];
+
+function renderAiMessages(data) {
+  const container = document.getElementById('ai-messages');
+  container.innerHTML = '';
+  data.forEach(msg => {
+    const div = document.createElement('div');
+    div.className = `ai-msg ${msg.role}`;
+
+    const avatar = `<div class="ai-avatar ${msg.role}">${msg.role === 'assistant' ? '✦' : '你'}</div>`;
+
+    let refsHtml = '';
+    if (msg.refs) {
+      refsHtml = `<div class="ai-refs">${msg.refs.map(r => `
+        <div class="ai-ref-chip" onclick="openAiDrawer()">
+          <span style="font-size:10px">📄</span>
+          <span class="ai-ref-chip-name">${r.name}</span>
+          <span class="ai-ref-chip-src">${r.src}</span>
+          <span style="color:rgba(0,0,0,0.3)">↗</span>
+        </div>
+      `).join('')}</div>
+      <button class="ai-add-note-btn" onclick="addAnswerToNote()">+ 加入笔记</button>`;
+    }
+
+    const textFormatted = msg.text.replace(/\n/g, '<br>').replace(/•/g, '&bull;');
+
+    div.innerHTML = avatar + `
+      <div class="ai-bubble">
+        <div class="ai-bubble-time">${msg.time}</div>
+        <div class="ai-bubble-text">${textFormatted}</div>
+        ${refsHtml}
+      </div>
+    `;
+    container.appendChild(div);
+  });
+  container.scrollTop = container.scrollHeight;
+}
+
+function openAiDrawer() {
+  showKbDrawer('note-021', false, 'ai');
+}
+
+function handleAiEnter(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendAiMessage();
+  }
+}
+
+function sendAiMessage() {
+  const input = document.getElementById('ai-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  chatData.push({ role: 'user', time: new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}), text });
+  renderAiMessages(chatData);
+  input.value = '';
+
+  // Simulate response
+  setTimeout(() => {
+    chatData.push({
+      role: 'assistant',
+      time: new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}),
+      text: '根据当前知识库，我只找到了部分证据，不能支持完整结论。\n\n可确定的是：\n• 该问题与你收录的知识内化和 AI 产品设计笔记相关。\n• 现有材料能支持“输入变资产”的产品定位，但不足以证明更广泛的市场判断。\n\n不确定部分：缺少竞品样本和用户验证记录，暂不做无依据断言。',
+      refs: [
+        { name: 'AI产品框架笔记', src: 'AI笔记 · 最新' },
+      ]
+    });
+    renderAiMessages(chatData);
+  }, 800);
+}
+
+function addAnswerToNote() {
+  alert('已加入笔记固定区块：小助手对话沉淀\n\n包含：原问题、规范化问题、助手回答、时间。');
+}
+
+function loadChat(idx) {
+  document.querySelectorAll('.ai-hist-item').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.ai-hist-item')[idx]?.classList.add('active');
+  // Demo: all load same data
+  renderAiMessages(chatData);
+}
+
+function newChat() {
+  document.querySelectorAll('.ai-hist-item').forEach(el => el.classList.remove('active'));
+  document.getElementById('ai-messages').innerHTML = `
+    <div style="text-align:center;padding:40px 20px;color:var(--text-muted)">
+      <div style="font-size:40px;margin-bottom:12px">✦</div>
+      <div style="font-size:14px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">开始新对话</div>
+      <div style="font-size:12px">基于你的知识库提问，获取有证据支撑的回答</div>
+    </div>
+  `;
+}
+
+// ===== PAGE SWITCHING =====
+function switchPage(name) {
+  drawerBackStack = [];
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-'+name).classList.add('active');
+  document.getElementById('nav-'+name).classList.add('active');
+}
+
+// ===== CALENDAR =====
+function toggleCal() {
+  const pop = document.getElementById('cal-popover');
+  pop.classList.toggle('open');
+}
+
+function openInfoModal() {
+  document.getElementById('cal-popover').classList.remove('open');
+  document.getElementById('info-modal').classList.add('open');
+}
+function closeInfoModal() {
+  document.getElementById('info-modal').classList.remove('open');
+}
+
+// close cal popover on outside click
+document.addEventListener('click', (e) => {
+  const pop = document.getElementById('cal-popover');
+  if (pop.classList.contains('open') && !e.target.closest('#cal-popover') && !e.target.closest('#cal-btn')) {
+    pop.classList.remove('open');
+  }
+});
+
+// ===== QUICK CAPTURE =====
+function toggleStatus(which) {
+  document.getElementById('btn-later').classList.remove('selected');
+  document.getElementById('btn-fav').classList.remove('selected');
+  document.getElementById('btn-'+which).classList.add('selected');
+}
+
+function addAttachDemo() {
+  const chip = document.createElement('div');
+  chip.className = 'qc-attach-chip';
+  chip.innerHTML = `<span>📎</span><span class="qc-attach-chip-name">新附件_${Date.now()%1000}.png</span><button class="qc-attach-remove" onclick="this.parentElement.remove()">×</button>`;
+  document.getElementById('qc-attachments').appendChild(chip);
+}
+
+function addRecord(e) {
+  const content = document.getElementById('qc-content').value.trim();
+  if (!content) { alert('请输入内容'); return; }
+  const isLater = document.getElementById('btn-later').classList.contains('selected');
+  const status = isLater ? 'waiting' : 'pending';
+  const newItem = {
+    id: Date.now(),
+    title: content.length > 40 ? content.substring(0,40)+'...' : content,
+    source: '手动输入', domain: '',
+    time: (() => {
+      const d = new Date();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mi = String(d.getMinutes()).padStart(2, '0');
+      return `${mm}-${dd} ${hh}:${mi}`;
+    })(),
+    status,
+    tags: ['新收录'],
+    actions: status === 'waiting' ? ['view','promote','internalize','delete'] : ['view','internalize','delete']
+  };
+  inboxData.unshift(newItem);
+  document.getElementById('qc-content').value = '';
+  document.getElementById('qc-note').value = '';
+  filterInbox();
+
+  // feedback
+  const btn = e?.target?.closest?.('.btn-primary') || document.querySelector('.qc-actions .btn-primary');
+  if (btn) {
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✓ 已添加';
+    btn.style.background = '#22c55e';
+    setTimeout(() => { btn.innerHTML = orig; btn.style.background = ''; }, 1500);
+  }
+}
+
+function handleQcEnter(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    addRecord(e);
+  }
+}
+
+function applyHeroUserName() {
+  const el = document.getElementById('hero-username');
+  if (!el) return;
+  const configured = (window.INNEX_USER_NAME || localStorage.getItem('innex_user_name') || 'USER').trim();
+  const normalized = configured.replace(/\s+/g, ' ').slice(0, 18);
+  el.textContent = (normalized || 'USER').toUpperCase();
+}
+
+// ===== INIT =====
+applyHeroUserName();
+renderInbox(inboxData);
+renderAiMessages(chatData);
+
+// search suggestion delegation (avoids inline onclick XSS)
+document.getElementById('search-suggestions').addEventListener('click', (e) => {
+  const item = e.target.closest('.search-suggestion-item');
+  if (!item) return;
+  const idx = parseInt(item.getAttribute('data-suggestion-index'));
+  const matches = document.getElementById('search-suggestions')._suggestions || [];
+  if (matches[idx]) {
+    selectSearchSuggestion(matches[idx].title);
+  }
+});
+</script>
+</body>
+</html>

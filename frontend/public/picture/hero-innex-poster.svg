@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1840 170" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="bgFade" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0f0e"/>
+      <stop offset="0.58" stop-color="#111815"/>
+      <stop offset="1" stop-color="#060807"/>
+    </linearGradient>
+    <radialGradient id="moon" cx="35%" cy="30%" r="70%">
+      <stop offset="0" stop-color="#f8cf58"/>
+      <stop offset="0.68" stop-color="#f6b937"/>
+      <stop offset="1" stop-color="#f15a24"/>
+    </radialGradient>
+    <pattern id="grid" width="42" height="42" patternUnits="userSpaceOnUse">
+      <path d="M42 0H0V42" fill="none" stroke="rgba(255,255,255,0.055)" stroke-width="1"/>
+    </pattern>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.6" fill="rgba(255,255,255,0.18)"/>
+    </pattern>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="4" flood-color="#000" flood-opacity="0.26"/>
+    </filter>
+    <clipPath id="moonClip">
+      <circle cx="1265" cy="86" r="135"/>
+    </clipPath>
+  </defs>
+
+  <rect width="1840" height="300" fill="url(#bgFade)"/>
+  <rect width="1840" height="300" fill="url(#grid)" opacity="0.78"/>
+  <rect x="760" y="20" width="300" height="210" fill="url(#dots)" opacity="0.55"/>
+  <rect x="1280" y="170" width="250" height="120" fill="url(#dots)" opacity="0.26"/>
+
+  <path d="M0 170L110 0H250L140 170Z" fill="#0a0d0c" opacity="0.72"/>
+  <path d="M1435 0H1840V170H1378L1588 0Z" fill="#070a09" opacity="0.82"/>
+  <path d="M1320 170L1518 0H1656L1462 170Z" fill="#ffffff" opacity="0.08"/>
+  <path d="M1140 170L1340 30H1450L1250 170Z" fill="#ffffff" opacity="0.045"/>
+
+  <g clip-path="url(#moonClip)" filter="url(#softShadow)">
+    <circle cx="1265" cy="86" r="135" fill="url(#moon)"/>
+    <circle cx="1220" cy="40" r="180" fill="#fff2b4" opacity="0.08"/>
+    <rect x="1110" y="0" width="300" height="170" fill="url(#grid)" opacity="0.08"/>
+  </g>
+  <path d="M1268 170L1588 -24H1720L1410 170Z" fill="#101514" opacity="0.96"/>
+  <path d="M1225 170L1555 -34H1640L1308 170Z" fill="#ffffff" opacity="0.08"/>
+
+  <text x="110" y="30" font-family="JetBrains Mono, Consolas, monospace" font-size="10" letter-spacing="1.8" fill="#f8f4ed" opacity="0.52">INNEX_SYSTEM v3.2</text>
+  <text x="110" y="52" font-family="JetBrains Mono, Consolas, monospace" font-size="10" letter-spacing="1.8" fill="#f8f4ed" opacity="0.52">INTERNALIZATION ENGINE</text>
+  <rect x="246" y="24" width="6" height="6" fill="#f15a24"/>
+
+  <text x="145" y="103" font-family="Arial Black, Impact, sans-serif" font-size="64" font-weight="900" letter-spacing="-2.6" fill="#f8f4ed" filter="url(#softShadow)">WELCOME,</text>
+  <text x="145" y="158" font-family="Arial Black, Impact, sans-serif" font-size="68" font-weight="900" letter-spacing="-2.6" fill="#f15a24" filter="url(#softShadow)">USER</text>
+
+  <text x="44" y="128" font-family="JetBrains Mono, Consolas, monospace" font-size="9" fill="#f8f4ed" opacity="0.08">let input = capture();</text>
+  <text x="44" y="150" font-family="JetBrains Mono, Consolas, monospace" font-size="9" fill="#f8f4ed" opacity="0.08">let output = organize();</text>
+  <text x="1660" y="132" font-family="JetBrains Mono, Consolas, monospace" font-size="9" fill="#f8f4ed" opacity="0.14">let input = capture();</text>
+  <text x="1660" y="154" font-family="JetBrains Mono, Consolas, monospace" font-size="9" fill="#f8f4ed" opacity="0.14">let output = organize();</text>
+
+  <rect x="22" y="84" width="6" height="6" fill="#f15a24"/>
+  <rect x="748" y="24" width="12" height="12" fill="#f15a24"/>
+  <rect x="846" y="112" width="7" height="7" fill="#f15a24"/>
+  <rect x="1798" y="86" width="7" height="7" fill="#f15a24"/>
+</svg>
