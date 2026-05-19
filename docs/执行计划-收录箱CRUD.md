@@ -22,7 +22,8 @@
 | 数据库 | Supabase PostgreSQL | 收录记录、附件、profiles |
 | RLS | Row Level Security | 所有表启用，user_id = auth.uid() |
 | 客户端 | Supabase JS SDK | Auth + DB + Storage |
-| LLM | GPT-4o | 先预留接口，第二阶段接入 |
+| LLM 主力 | DeepSeek API | 文本任务（摘要/标签/内化笔记/RAG 问答），第二阶段接入 |
+| LLM 多模态 | GPT-4o | 图片 OCR/理解等 DeepSeek 不支持的任务，第二阶段接入 |
 
 ## 数据库表
 
