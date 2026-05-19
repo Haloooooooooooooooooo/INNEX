@@ -10,7 +10,10 @@
 - 不做知识图谱和 AI 助手逻辑（第三阶段）
 - 不做文档解析服务（第二阶段）
 - 不引入 Mastra / CopilotKit / React Flow（后续阶段再评估）
-- 不做 OAuth 社交登录（后续再加 GitHub/Google）
+- 不做 OAuth 社交登录（后续再加）
+- 不做内化 Agent / RAG 问答 / 知识图谱（第二、三阶段）
+- 不做 AI 聊天机器人（全阶段不做，只做基于笔记的 RAG 问答）
+- 不做 Mastra / G6 / Docling（后续阶段引入）
 
 ## 技术栈
 
