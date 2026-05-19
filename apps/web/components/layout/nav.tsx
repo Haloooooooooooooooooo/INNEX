@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 const navItems = [
   { href: "/inbox", cn: "收录箱", en: "Inbox" },
   { href: "/kb", cn: "知识库", en: "Knowledge Base" },
-  { href: "/ai", cn: "AI 助手", en: "AI Assistant" },
+  { href: "/qa", cn: "AI 问答", en: "RAG QA" },
 ];
 
 export function Nav() {
