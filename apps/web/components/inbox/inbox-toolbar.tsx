@@ -14,6 +14,7 @@ interface InboxToolbarProps {
   onStatusChange: (status: string) => void;
   search: string;
   onSearchChange: (search: string) => void;
+  counts: { all: number; later: number; pending: number; crystallized: number };
 }
 
 export function InboxToolbar({
@@ -21,32 +22,37 @@ export function InboxToolbar({
   onStatusChange,
   search,
   onSearchChange,
+  counts,
 }: InboxToolbarProps) {
   return (
-    <div className="flex items-center gap-4">
-      <div className="flex gap-1">
+    <div className="px-4 pt-3 pb-2 flex items-center gap-3 border-b border-[--border-light] shrink-0">
+      <div className="flex gap-5">
         {tabs.map((tab) => (
           <button
             key={tab.key}
             data-tab={tab.key}
             onClick={() => onStatusChange(tab.key)}
-            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+            className={`text-[13px] transition-colors pb-2 border-b-[3px] -mb-[9px] ${
               statusFilter === tab.key
-                ? "bg-[--ink] text-white font-medium"
-                : "text-[--muted] hover:bg-black/5"
+                ? "text-[--ink] font-semibold border-[--innex-accent]"
+                : "text-[--text-muted] border-transparent hover:text-[--ink]"
             }`}
           >
-            {tab.label}
+            {tab.label}{" "}
+            <span className="text-[--text-muted] text-xs">({counts[tab.key as keyof typeof counts]})</span>
           </button>
         ))}
       </div>
       <div className="flex-1" />
-      <Input
-        placeholder="搜索标题、来源…"
-        value={search}
-        onChange={(e) => onSearchChange(e.target.value)}
-        className="w-56 h-8 text-sm"
-      />
+      <div className="relative">
+        <Input
+          placeholder="搜索标题、标签、来源…"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          className="w-52 h-8 text-xs border-[--border-light] rounded-md pl-7"
+        />
+        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs opacity-40">🔍</span>
+      </div>
     </div>
   );
 }
