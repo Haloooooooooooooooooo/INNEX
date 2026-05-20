@@ -30,8 +30,8 @@ export async function parseContent(
   // ---- TITLE ----
   let title: string;
   if (type === "url" || type === "video") {
-    // URL: use fetched page title if available
-    title = urlTitle || raw.replace(/^https?:\/\/[^\s]+/, "").trim() || "未命名";
+    // URL: use fetched page title
+    title = urlTitle?.trim() || "未命名";
   } else if (type === "document") {
     title = attachments[0]?.name || "文档";
   } else if (readable === true) {
@@ -69,7 +69,8 @@ export async function parseContent(
         parseSummaryUserPrompt(raw),
         { temperature: 0.3, maxOutputTokens: 150 }
       );
-    } catch {
+    } catch (e) {
+      console.error("[parse] summary generation failed:", e);
       summary = null;
     }
   } else if (readable === false) {
@@ -95,7 +96,8 @@ export async function parseContent(
       );
       const parsed = JSON.parse(rawTags.trim());
       if (Array.isArray(parsed)) tags = parsed.slice(0, 8);
-    } catch {
+    } catch (e) {
+      console.error("[parse] tag extraction failed:", e);
       tags = [];
     }
   } else {

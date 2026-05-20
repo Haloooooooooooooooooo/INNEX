@@ -15,6 +15,7 @@ interface QuickCaptureProps {
     my_understanding?: string;
     status: string;
     url_title?: string;
+    url_content?: string;
     attachments?: AttachmentDraft[];
   }) => Promise<{ success?: boolean; error?: string }>;
 }
@@ -26,6 +27,7 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
   const [saving, setSaving] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
   const [fetchedTitle, setFetchedTitle] = useState<string | null>(null);
+  const [fetchedContent, setFetchedContent] = useState<string | null>(null);
   const [fetchingTitle, setFetchingTitle] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const urlTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -47,6 +49,7 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
           });
           const data = await res.json();
           if (data.title) setFetchedTitle(data.title);
+          if (data.content) setFetchedContent(data.content);
         } catch {
           // ignore
         } finally {
@@ -55,6 +58,7 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
       }, 600);
     } else {
       setFetchedTitle(null);
+      setFetchedContent(null);
     }
   }
 
@@ -87,12 +91,14 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
       my_understanding: myUnderstanding.trim() || undefined,
       status,
       url_title: fetchedTitle || undefined,
+      url_content: fetchedContent || undefined,
       attachments: attachments.length > 0 ? attachments : undefined,
     });
     setContent("");
     setMyUnderstanding("");
     setStatus("later");
     setFetchedTitle(null);
+    setFetchedContent(null);
     setAttachments([]);
     setSaving(false);
   }

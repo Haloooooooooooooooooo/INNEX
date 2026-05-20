@@ -53,7 +53,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { content, my_understanding, status, url_title, attachments } = body;
+  const { content, my_understanding, status, url_title, url_content, attachments } = body;
 
   // Submit condition: content OR attachments must have content
   const hasContent = content?.trim();
@@ -69,8 +69,10 @@ export async function POST(request: Request) {
   const detected = detectType(content || null, attachments || []);
 
   // 2. Light parse: generate title, source, summary, tags
+  // For URL types, use the fetched page content rather than just the URL string
+  const parseContent_input = url_content || content || null;
   const parsed = await parseContent(
-    content || null,
+    parseContent_input,
     url_title || null,
     detected,
     attachments || []

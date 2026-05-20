@@ -32,6 +32,7 @@ export function useCaptureItems() {
     my_understanding?: string;
     status: string;
     url_title?: string;
+    url_content?: string;
     attachments?: { name: string; type: string; size: number }[];
   }) => {
     const res = await fetch("/api/capture-items", {
