@@ -105,7 +105,9 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
 
   const hasContent = content.trim().length > 0;
   const hasAttachments = attachments.length > 0;
-  const canSubmit = hasContent || hasAttachments;
+  const isUrl = /^https?:\/\/[^\s]+/.test(content.trim());
+  const urlFetching = isUrl && fetchingTitle;
+  const canSubmit = (hasContent || hasAttachments) && !urlFetching;
   const showUrlTitle = fetchedTitle && hasContent;
 
   return (
@@ -230,7 +232,7 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
             disabled={saving || !canSubmit}
             className="bg-[--innex-accent] text-white border-0 rounded-md px-[17px] py-2 font-sans text-xs font-bold cursor-pointer transition-all duration-200 flex items-center gap-1.5 whitespace-nowrap shadow-[0_6px_14px_rgba(241,90,36,0.22)] hover:bg-[--innex-accent-hover] hover:-translate-y-px hover:shadow-[0_9px_18px_rgba(241,90,36,0.28)] active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {saving ? "正在解析…" : "添加记录"}
+            {urlFetching ? "正在读取页面…" : saving ? "正在解析…" : "添加记录"}
             <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />

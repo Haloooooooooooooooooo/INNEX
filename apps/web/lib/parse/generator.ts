@@ -62,7 +62,10 @@ export async function parseContent(
 
   // ---- SUMMARY ----
   let summary: string | null = null;
-  if (readable === true || readable === "partial") {
+  const rawIsUrl = /^https?:\/\/[^\s]+$/.test(raw);
+  const shouldGenerate = (readable === true || readable === "partial") && !rawIsUrl;
+
+  if (shouldGenerate) {
     try {
       summary = await generateCompletion(
         PARSE_SUMMARY_PROMPT,
@@ -73,6 +76,9 @@ export async function parseContent(
       console.error("[parse] summary generation failed:", e);
       summary = null;
     }
+  } else if (!shouldGenerate && (type === "url" || type === "video")) {
+    // URL content wasn't fetched — defer to internalization
+    summary = "页面内容暂未抓取，摘要将在内化时生成";
   } else if (readable === false) {
     if (type === "text") {
       summary = null; // < 50 chars, no summary
@@ -87,7 +93,7 @@ export async function parseContent(
 
   // ---- TAGS ----
   let tags: string[] = [];
-  if (readable === true || readable === "partial") {
+  if (shouldGenerate) {
     try {
       const rawTags = await generateCompletion(
         PARSE_TAGS_PROMPT,
