@@ -88,9 +88,9 @@ CREATE POLICY "Users can delete own chunks" ON note_chunks FOR DELETE  USING (au
 -- RPC: pgvector similarity search
 CREATE OR REPLACE FUNCTION match_note_chunks(
   query_embedding vector(1536),
+  p_user_id uuid,
   match_threshold float DEFAULT 0.7,
-  match_count int DEFAULT 5,
-  p_user_id uuid
+  match_count int DEFAULT 5
 )
 RETURNS TABLE(
   id uuid,
