@@ -98,6 +98,19 @@ export async function DELETE(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  // If crystallized, cascade-delete the associated note first
+  // (notes -> note_relations + ai_answers cascade via DB FK)
+  const { data: note } = await supabase
+    .from("notes")
+    .select("id")
+    .eq("capture_item_id", id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (note) {
+    await supabase.from("notes").delete().eq("id", note.id).eq("user_id", user.id);
+  }
+
   const { error } = await supabase
     .from("capture_items")
     .delete()
