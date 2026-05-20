@@ -1,5 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { detectType } from "@/lib/parse/detector";
+import { parseContent } from "@/lib/parse/generator";
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -51,26 +53,42 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { type, title, source, source_url, raw_content, my_understanding, tags, status } = body;
+  const { content, my_understanding, status, url_title, attachments } = body;
 
-  if (!title || !source) {
+  // Submit condition: content OR attachments must have content
+  const hasContent = content?.trim();
+  const hasAttachments = attachments?.length > 0;
+  if (!hasContent && !hasAttachments) {
     return NextResponse.json(
-      { error: "Title and source are required" },
+      { error: "内容或附件至少需要一个" },
       { status: 400 }
     );
   }
 
+  // 1. Detect type and readability
+  const detected = detectType(content || null, attachments || []);
+
+  // 2. Light parse: generate title, source, summary, tags
+  const parsed = await parseContent(
+    content || null,
+    url_title || null,
+    detected,
+    attachments || []
+  );
+
+  // 3. Save
   const { data, error } = await supabase
     .from("capture_items")
     .insert({
       user_id: user.id,
-      type: type || "text",
-      title,
-      source,
-      source_url: source_url || null,
-      raw_content: raw_content || null,
-      my_understanding: my_understanding || null,
-      tags: tags || [],
+      type: detected.type,
+      title: parsed.title,
+      source: parsed.source,
+      source_url: detected.source_url || null,
+      raw_content: content?.trim() || null,
+      my_understanding: my_understanding?.trim() || null,
+      summary: parsed.summary,
+      tags: parsed.tags,
       status: status || "later",
     })
     .select()

@@ -28,14 +28,11 @@ export function useCaptureItems() {
   }, [fetchItems]);
 
   const addItem = async (item: {
-    type: string;
-    title: string;
-    source: string;
-    source_url?: string;
-    raw_content?: string;
+    content: string;
     my_understanding?: string;
-    tags?: string[];
-    status?: string;
+    status: string;
+    url_title?: string;
+    attachments?: { name: string; type: string; size: number }[];
   }) => {
     const res = await fetch("/api/capture-items", {
       method: "POST",
