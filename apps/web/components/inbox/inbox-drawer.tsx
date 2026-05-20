@@ -34,8 +34,6 @@ function formatTime(iso: string) {
   return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
 }
 
-const drawerFieldClass =
-  "flex flex-col gap-0.5 py-2 border-b border-[--border-light] last:border-b-0";
 const fieldLabelClass =
   "text-[10px] font-semibold text-[--text-muted] uppercase tracking-[0.05em]";
 const fieldValueClass = "text-[13px] text-[--ink]";
@@ -50,23 +48,31 @@ export function InboxDrawer({
   internalizing,
 }: InboxDrawerProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [understanding, setUnderstanding] = useState("");
   const [notebook, setNotebook] = useState("");
-  const [showSaveBtn, setShowSaveBtn] = useState(false);
+  const [showUnderstandingSave, setShowUnderstandingSave] = useState(false);
+  const [showNotebookSave, setShowNotebookSave] = useState(false);
+  const [draftMode, setDraftMode] = useState(false);
+  const [draftContent, setDraftContent] = useState("");
+
   const nbRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (item) {
-      setNotebook(item.my_understanding || "");
-      setShowSaveBtn(false);
+      setUnderstanding(item.my_understanding || "");
+      setNotebook("");
+      setShowUnderstandingSave(false);
+      setShowNotebookSave(false);
+      setDraftMode(false);
     }
   }, [item?.id]);
 
   if (!item) return null;
 
-  async function saveNotebook() {
-    if (notebook === (item!.my_understanding || "")) return;
-    await onUpdate(item!.id, { my_understanding: notebook || null });
-    setShowSaveBtn(false);
+  async function saveUnderstanding() {
+    if (understanding === (item!.my_understanding || "")) return;
+    await onUpdate(item!.id, { my_understanding: understanding || null });
+    setShowUnderstandingSave(false);
   }
 
   async function handleStatusChange(status: CaptureItemStatus) {
@@ -83,12 +89,97 @@ export function InboxDrawer({
     if (item!.source_url) {
       window.open(item!.source_url, "_blank", "noopener,noreferrer");
     } else if (item!.raw_content) {
-      alert(item!.raw_content);
+      // Show text content in a dialog-style view
+      const w = window.open("", "_blank", "width=600,height=400");
+      if (w) {
+        w.document.write(
+          `<pre style="white-space:pre-wrap;font-family:system-ui;padding:20px;font-size:14px;line-height:1.6">${escapeHtml(item!.raw_content || "")}</pre>`
+        );
+      }
     }
+  }
+
+  function enterDraftMode() {
+    // Phase 2: LLM generates draft. For now, use raw_content as placeholder.
+    setDraftContent(item!.raw_content || "（内化 Agent 将在 Phase 2 生成结构化笔记）");
+    setDraftMode(true);
+  }
+
+  function exitDraftMode() {
+    setDraftMode(false);
+  }
+
+  function saveDraft() {
+    // Phase 2: Save generated note to notes table
+    onInternalize(item!.id);
+    setDraftMode(false);
   }
 
   const s = item.status;
 
+  // === DRAFT MODE ===
+  if (draftMode) {
+    return (
+      <>
+        <div
+          className={`fixed inset-0 bg-black/20 z-40 transition-opacity duration-200 ${
+            open ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
+          onClick={onClose}
+        />
+        <div
+          className={`fixed right-0 top-0 h-full w-[460px] bg-white shadow-2xl z-50 transition-transform duration-250 flex flex-col ${
+            open ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          <div className="flex items-center justify-between px-6 py-4 shrink-0">
+            <span className="text-base font-semibold text-[--ink]">内化草稿</span>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 flex items-center justify-center rounded hover:bg-black/5 text-muted-foreground text-lg"
+            >
+              ×
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-auto px-6 flex flex-col gap-3">
+            <p className="text-[12px] text-[--text-secondary]">
+              已生成 AI 笔记草稿。你可以直接修改正文，确认后保存即可。
+            </p>
+
+            <div>
+              <div className="text-[11px] font-semibold text-[--text-muted] uppercase tracking-[0.05em] mb-1.5">
+                AI 笔记正文
+              </div>
+              <textarea
+                className="w-full border border-[--border-light] rounded-md px-3 py-2 font-sans text-[12px] text-[--ink] resize-none min-h-[280px] leading-relaxed bg-[--paper-light] focus:bg-white focus:border-[--innex-accent] transition-all"
+                value={draftContent}
+                onChange={(e) => setDraftContent(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="px-6 py-4 border-t border-[--border-light] shrink-0 flex gap-2">
+            <button
+              onClick={exitDraftMode}
+              className="px-3 py-1.5 text-[11px] rounded-md border border-[--border-light] hover:bg-black/[0.04] transition-colors"
+            >
+              返回详情
+            </button>
+            <button
+              onClick={saveDraft}
+              disabled={internalizing}
+              className="px-3 py-1.5 text-[11px] rounded-md bg-[--innex-accent] text-white font-bold hover:bg-[--innex-accent-hover] disabled:opacity-50 transition-colors ml-auto"
+            >
+              {internalizing ? "保存中…" : "保存"}
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // === DETAIL MODE ===
   return (
     <>
       <div
@@ -117,15 +208,15 @@ export function InboxDrawer({
         <div className="flex-1 overflow-auto px-6 flex flex-col gap-0">
           {/* Meta fields */}
           <div className="flex flex-col">
-            <div className={drawerFieldClass}>
+            <div className="flex flex-col gap-0.5 py-2 border-b border-[--border-light]">
               <span className={fieldLabelClass}>标题</span>
               <span className={`${fieldValueClass} font-semibold`}>{item.title}</span>
             </div>
-            <div className={drawerFieldClass}>
+            <div className="flex flex-col gap-0.5 py-2 border-b border-[--border-light]">
               <span className={fieldLabelClass}>来源</span>
               <span className={fieldValueClass}>{item.source}</span>
             </div>
-            <div className={drawerFieldClass}>
+            <div className="flex flex-col gap-0.5 py-2 border-b border-[--border-light]">
               <span className={fieldLabelClass}>收录时间</span>
               <span
                 className={fieldValueClass}
@@ -134,13 +225,13 @@ export function InboxDrawer({
                 {formatTime(item.created_at)}
               </span>
             </div>
-            <div className={drawerFieldClass}>
+            <div className="flex flex-col gap-0.5 py-2 border-b border-[--border-light]">
               <span className={fieldLabelClass}>状态</span>
               <span className={fieldValueClass}>
                 <StatusBadge status={item.status} />
               </span>
             </div>
-            <div className={drawerFieldClass}>
+            <div className="flex flex-col gap-0.5 py-2 border-b border-[--border-light] last:border-b-0">
               <span className={fieldLabelClass}>标签</span>
               <span className={fieldValueClass}>
                 {item.tags?.length ? (
@@ -165,11 +256,7 @@ export function InboxDrawer({
               摘要
             </div>
             <p className="text-[12px] text-[--text-secondary] leading-relaxed">
-              {item.raw_content
-                ? item.raw_content.length > 300
-                  ? item.raw_content.slice(0, 300) + "…"
-                  : item.raw_content
-                : "该记录暂无条件生成摘要，内化后将自动补充。"}
+              {item.summary || item.raw_content?.slice(0, 300) || "暂无摘要"}
             </p>
           </div>
 
@@ -179,19 +266,44 @@ export function InboxDrawer({
               我的理解
             </div>
             <textarea
-              ref={nbRef}
+              className="w-full border border-[--border-light] rounded-md px-3 py-2 font-sans text-[12px] text-[--ink] resize-none min-h-[50px] leading-relaxed bg-[--paper-light] focus:bg-white focus:border-[--innex-accent] focus:shadow-[0_0_0_3px_rgba(241,90,36,0.08)] transition-all"
+              placeholder="你的理解（录入时填写）"
+              value={understanding}
+              onChange={(e) => {
+                setUnderstanding(e.target.value);
+                setShowUnderstandingSave(true);
+              }}
+            />
+            {showUnderstandingSave && (
+              <div className="flex justify-end mt-1.5">
+                <button
+                  onClick={saveUnderstanding}
+                  className="px-3 py-1 text-[11px] bg-[--innex-accent] text-white rounded-md font-bold hover:bg-[--innex-accent-hover] transition-colors"
+                >
+                  保存
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* 笔记本（独立的自由笔记区） */}
+          <div className="mt-3">
+            <div className="text-[11px] font-semibold text-[--text-muted] uppercase tracking-[0.05em] mb-1.5">
+              笔记本
+            </div>
+            <textarea
               className="w-full border border-[--border-light] rounded-md px-3 py-2 font-sans text-[12px] text-[--ink] resize-none min-h-[68px] leading-relaxed bg-[--paper-light] focus:bg-white focus:border-[--innex-accent] focus:shadow-[0_0_0_3px_rgba(241,90,36,0.08)] transition-all"
-              placeholder="写下你对这条记录的理解，双击可编辑..."
+              placeholder="随时记录你的想法…"
               value={notebook}
               onChange={(e) => {
                 setNotebook(e.target.value);
-                setShowSaveBtn(true);
+                setShowNotebookSave(true);
               }}
             />
-            {showSaveBtn && (
+            {showNotebookSave && (
               <div className="flex justify-end mt-1.5">
                 <button
-                  onClick={saveNotebook}
+                  onClick={() => setShowNotebookSave(false)}
                   className="px-3 py-1 text-[11px] bg-[--innex-accent] text-white rounded-md font-bold hover:bg-[--innex-accent-hover] transition-colors"
                 >
                   保存
@@ -229,11 +341,7 @@ export function InboxDrawer({
         </div>
 
         {/* Footer Actions */}
-        <div
-          className={`px-6 py-4 border-t border-[--border-light] shrink-0 flex gap-2 flex-wrap ${
-            s === "crystallized" ? "flex-col" : ""
-          }`}
-        >
+        <div className="px-6 py-4 border-t border-[--border-light] shrink-0 flex gap-2 flex-wrap">
           {/* 查看原笔记 — all */}
           <button
             onClick={handleViewOriginal}
@@ -255,7 +363,7 @@ export function InboxDrawer({
           {/* 一键内化 — later + pending */}
           {s !== "crystallized" && (
             <button
-              onClick={() => onInternalize(item.id)}
+              onClick={enterDraftMode}
               disabled={internalizing || !item.raw_content}
               className="px-3 py-1.5 text-[11px] rounded-md bg-[--innex-accent] text-white font-bold hover:bg-[--innex-accent-hover] disabled:opacity-50 transition-colors"
             >
@@ -308,4 +416,12 @@ export function InboxDrawer({
       </AlertDialog>
     </>
   );
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
