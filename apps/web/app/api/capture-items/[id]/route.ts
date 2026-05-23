@@ -17,7 +17,7 @@ export async function GET(
   const { id } = await params;
   const { data, error } = await supabase
     .from("capture_items")
-    .select("*")
+    .select("*, attachments(*)")
     .eq("id", id)
     .eq("user_id", user.id)
     .single();

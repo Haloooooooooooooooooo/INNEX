@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 interface CalendarPopoverProps {
   open: boolean;
@@ -38,7 +38,7 @@ export function CalendarPopover({ open, onClose, onOpenInfo }: CalendarPopoverPr
   return (
     <>
       <div className="fixed inset-0 z-[199]" onClick={onClose} />
-      <div className="fixed top-[60px] right-[22px] z-[200] bg-white border border-[--border-medium] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.15)] p-4 w-[240px]">
+      <div className="fixed top-[44px] right-[12px] z-[200] bg-white border border-[--border-medium] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.15)] p-4 w-[240px]">
         <div className="flex items-center justify-between mb-3">
           <button className="bg-none border-0 cursor-pointer text-[--text-secondary] text-sm px-1 py-0.5">
             ‹
@@ -69,7 +69,7 @@ export function CalendarPopover({ open, onClose, onOpenInfo }: CalendarPopoverPr
                 onClick={() => {
                   if (hasRecord) onOpenInfo();
                 }}
-                className={`text-[11px] text-center py-[5px] rounded-md relative transition-colors ${
+                className={`text-[11px] text-center py-[5px] rounded-[5px] relative transition-colors ${
                   d.otherMonth
                     ? "text-gray-300 cursor-default"
                     : isToday

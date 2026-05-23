@@ -13,10 +13,11 @@ export function TopBar({ calOpen, onToggleCal }: TopBarProps) {
       <div className="fixed top-[22px] right-[22px] z-[500] flex gap-2 items-center">
         <button
           onClick={onToggleCal}
-          className={`w-[42px] h-[42px] rounded-lg border border-white/18 bg-black/76 text-[#d8d3ca] backdrop-blur-[10px] flex items-center justify-center cursor-pointer text-sm transition-all duration-150 hover:bg-[--innex-accent-dim] hover:text-white hover:border-[--innex-accent]/45 ${
+          className={`relative w-[42px] h-[42px] rounded-lg border border-white/18 bg-black/76 text-[#d8d3ca] backdrop-blur-[10px] flex items-center justify-center cursor-pointer text-sm transition-all duration-150 hover:bg-[--innex-accent-dim] hover:text-white hover:border-[--innex-accent]/45 ${
             calOpen ? "text-[--innex-accent] border-[--innex-accent]/40" : ""
           }`}
         >
+          <span className="absolute right-[6px] top-[6px] w-[6px] h-[6px] rounded-full bg-[--innex-accent]" />
           <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
             <rect x="3" y="4" width="18" height="18" rx="2" />
             <line x1="16" y1="2" x2="16" y2="6" />

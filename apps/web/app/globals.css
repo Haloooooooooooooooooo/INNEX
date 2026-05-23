@@ -106,3 +106,96 @@
     height: 100%;
   }
 }
+
+@layer components {
+  .innex-shell {
+    background:
+      radial-gradient(circle at 100% 22%, rgba(241, 90, 36, 0.16), transparent 30%),
+      linear-gradient(180deg, #101310 0%, #070a09 100%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    overflow: hidden;
+    margin: 4px;
+    height: calc(100vh - 8px);
+  }
+
+  .innex-main-area {
+    position: relative;
+    background: var(--paper);
+    overflow: hidden;
+  }
+
+  .innex-main-area::before {
+    content: "CAPTURE SYSTEM";
+    position: absolute;
+    right: 32px;
+    top: 340px;
+    font-family: Impact, "Arial Black", sans-serif;
+    font-size: 110px;
+    line-height: 0.9;
+    letter-spacing: -0.06em;
+    color: rgba(0, 0, 0, 0.04);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .innex-main-area::after {
+    content: "INNER KNOWLEDGE";
+    position: absolute;
+    left: 58px;
+    bottom: 24px;
+    font-family: Impact, "Arial Black", sans-serif;
+    font-size: 72px;
+    letter-spacing: -0.05em;
+    color: rgba(0, 0, 0, 0.035);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .hero-strip {
+    position: relative;
+    height: 170px;
+    min-height: 170px;
+    background: #0b0f0e url("/picture/hero-innex-poster.svg") left center / cover no-repeat;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+  }
+
+  .hero-strip::before {
+    content: none;
+  }
+
+  .hero-strip::after {
+    content: none;
+  }
+
+  .hero-title-wrap {
+    position: absolute;
+    left: 130px;
+    top: 18px;
+    z-index: 2;
+    color: #f0ede8;
+  }
+
+  .hero-title-kicker {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: rgba(239, 234, 226, 0.55);
+    text-transform: uppercase;
+  }
+
+  .hero-title-main {
+    margin-top: 8px;
+    font-family: Impact, "Arial Black", var(--font-display), sans-serif;
+    font-size: 72px;
+    line-height: 0.85;
+    letter-spacing: -0.04em;
+    color: #f3efe8;
+    text-transform: uppercase;
+  }
+
+  .hero-title-main span {
+    color: var(--innex-accent);
+  }
+}

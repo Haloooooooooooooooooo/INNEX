@@ -1,4 +1,4 @@
-export type CaptureItemType = "text" | "url" | "image" | "document" | "video";
+export type CaptureItemType = "text" | "url" | "image" | "document" | "video" | "attachment_group";
 
 export type CaptureItemStatus = "later" | "pending" | "crystallized";
 
@@ -18,11 +18,14 @@ export interface CaptureItem {
   source_url: string | null;
   raw_content: string | null;
   my_understanding: string | null;
+  notebook?: string | null;
   summary: string | null;
+  parse_debug?: ParseDebugInfo | null;
   status: CaptureItemStatus;
   tags: string[];
   created_at: string;
   updated_at: string;
+  attachments?: Attachment[];
 }
 
 export interface Attachment {
@@ -34,6 +37,27 @@ export interface Attachment {
   file_size: number | null;
   storage_path: string | null;
   created_at: string;
+}
+
+export interface ParseDebugInfo {
+  input_source: "content" | "url_content" | "attachment_extracted_text" | "file_extracted_text" | "none";
+  detected_type: CaptureItemType;
+  readable: boolean | "partial";
+  extracted_chars: number;
+  model_summary_attempted: boolean;
+  model_summary_succeeded: boolean;
+  model_tags_attempted: boolean;
+  model_tags_succeeded: boolean;
+  url_fetch_succeeded?: boolean;
+  file_extract_succeeded?: boolean;
+  file_extract_count?: number;
+  stages?: {
+    detect?: { ok: boolean };
+    extract?: { ok: boolean; strategy?: string; chars?: number };
+    summarize?: { attempted: boolean; ok: boolean };
+    tags?: { attempted: boolean; ok: boolean };
+  };
+  notes?: string[];
 }
 
 // === Phase 2 types ===
@@ -104,10 +128,31 @@ export interface QaResponse {
   answer: string;
   citations: AiAnswerCitation[];
   answerId: string | null;
+  sessionId?: string;
+  mode?: "notes" | "general" | "online";
+}
+
+export interface QaSession {
+  id: string;
+  title: string;
+  mode: "notes" | "general" | "online";
+  pinned_note_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface QaMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  citations: AiAnswerCitation[];
+  trace_id: string | null;
+  created_at: string;
 }
 
 export interface NoteListItem {
   id: string;
+  capture_item_id?: string | null;
   title: string;
   summary: string | null;
   tags: string[];

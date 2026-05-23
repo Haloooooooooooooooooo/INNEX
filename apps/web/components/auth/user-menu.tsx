@@ -1,7 +1,6 @@
-"use client";
+﻿"use client";
 
 import { useAuth } from "@/providers/auth-provider";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,9 +22,7 @@ export function UserMenu() {
         {initial}
       </DropdownMenuTrigger>
       <DropdownMenuContent alignOffset={-60} className="w-56">
-        <div className="px-3 py-2 text-sm text-muted-foreground truncate">
-          {email}
-        </div>
+        <div className="px-3 py-2 text-sm text-muted-foreground truncate">{email}</div>
         <DropdownMenuItem onClick={signOut} className="cursor-pointer text-red-500">
           退出登录
         </DropdownMenuItem>

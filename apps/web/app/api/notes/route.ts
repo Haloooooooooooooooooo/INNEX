@@ -14,12 +14,17 @@ export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const search = searchParams.get("search");
   const tag = searchParams.get("tag");
+  const captureItemId = searchParams.get("captureItemId");
 
   let query = supabase
     .from("notes")
-    .select("id, title, summary, tags, concepts, source, created_at")
+    .select("id, capture_item_id, title, content, summary, tags, concepts, source, created_at")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
+
+  if (captureItemId) {
+    query = query.eq("capture_item_id", captureItemId).limit(1);
+  }
 
   if (search) {
     query = query.or(`title.ilike.%${search}%,content.ilike.%${search}%`);

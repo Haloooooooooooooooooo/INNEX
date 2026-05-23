@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -2502,7 +2502,7 @@ function showInternalizationDraft(id) {
 
 从产品角度看，如果系统只强调即时问答能力，它很容易被通用模型替代；但如果它能够沉淀用户理解、维护知识状态、支持回写闭环，就会形成真正的个人知识系统。
 
-这条结论可直接用于产品定位表达：强调“输入变资产”，而不是只强调“回答问题”。在产品方案、竞品分析和复盘场景中都可以复用。</textarea>
+这条结论可直接用于产品定位表达：强调"输入变资产"，而不是只强调"回答问题"。在产品方案、竞品分析和复盘场景中都可以复用。</textarea>
     </div>
     <div class="drawer-actions draft-actions-fixed">
       <button class="drawer-action-btn" onclick="openInboxDrawer(${id})">返回详情</button>
@@ -2738,7 +2738,7 @@ function sendDrawerAiMessage(which) {
     drawerQuestionData[which].push({
       role:'assistant',
       time: t,
-      text:'基于当前知识库，这个问题可回答的部分是：这条笔记支持“输入变资产”的定位表达。若要做更强结论，还需要补充竞品样本与用户验证记录。'
+      text:'基于当前知识库，这个问题可回答的部分是：这条笔记支持"输入变资产"的定位表达。若要做更强结论，还需要补充竞品样本与用户验证记录。'
     });
     renderDrawerAiMessages(which);
   }, 500);
@@ -2787,91 +2787,91 @@ function showKbDrawer(type, showBack = false, drawerName = 'kb') {
 
   if (type === 'note-021') {
     inner.innerHTML = `
-      <div class=”kb-note-fixed-top”>
-        <div class=”drawer-header”>
-          <div class=”drawer-title”>笔记详情</div>
-          <div class=”drawer-header-actions”>
-            ${showBack ? '<button class=”drawer-back” onclick=”goDrawerBack()”>←</button>' : ''}
-            <button class=”drawer-close” onclick=”closeDrawer('${drawerName}')”>×</button>
+      <div class="kb-note-fixed-top">
+        <div class="drawer-header">
+          <div class="drawer-title">笔记详情</div>
+          <div class="drawer-header-actions">
+            ${showBack ? '<button class="drawer-back" onclick="goDrawerBack()">←</button>' : ''}
+            <button class="drawer-close" onclick="closeDrawer('${drawerName}')">×</button>
           </div>
         </div>
-        <div class=”drawer-section”>
-          <div class=”drawer-field”><div class=”drawer-field-label”>标题</div><div class=”drawer-field-value” style=”font-weight:600”>知识助手的核心竞争力是持续内化与复用</div></div>
-          <div class=”drawer-field”><div class=”drawer-field-label”>主题</div><div class=”drawer-field-value”>AI 产品经理</div></div>
-          <div class=”drawer-field”><div class=”drawer-field-label”>子主题</div><div class=”drawer-field-value”>Agent 设计</div></div>
-          <div class=”drawer-field”><div class=”drawer-field-label”>来源记录</div><div class=”drawer-field-value” style=”color:var(--accent)”>Agent 设计灵感：知识助手不等于聊天机器人</div></div>
+        <div class="drawer-section">
+          <div class="drawer-field"><div class="drawer-field-label">标题</div><div class="drawer-field-value" style="font-weight:600">知识助手的核心竞争力是持续内化与复用</div></div>
+          <div class="drawer-field"><div class="drawer-field-label">主题</div><div class="drawer-field-value">AI 产品经理</div></div>
+          <div class="drawer-field"><div class="drawer-field-label">子主题</div><div class="drawer-field-value">Agent 设计</div></div>
+          <div class="drawer-field"><div class="drawer-field-label">来源记录</div><div class="drawer-field-value" style="color:var(--accent)">Agent 设计灵感：知识助手不等于聊天机器人</div></div>
         </div>
       </div>
-      <div class=”kb-note-scroll”>
-      <div class=”drawer-section”>
-        <div class=”drawer-section-title”>摘要</div>
-        <div class=”drawer-body-text”>这条笔记强调知识助手的核心价值是持续内化与回写，不是一次性问答。系统应把用户输入逐步转化为可复用知识资产。</div>
+      <div class="kb-note-scroll">
+      <div class="drawer-section">
+        <div class="drawer-section-title">摘要</div>
+        <div class="drawer-body-text">这条笔记强调知识助手的核心价值是持续内化与回写，不是一次性问答。系统应把用户输入逐步转化为可复用知识资产。</div>
       </div>
-      <div class=”drawer-section”>
-        <div class=”drawer-section-title”>我的理解</div>
-        <textarea class=”drawer-editable-area js-understanding-input” placeholder=”写下你的理解...”>真正的差异不在回答能力本身，而在于能否形成”输入-整理-沉淀-复用”的闭环，这也是产品长期壁垒。</textarea>
-        <div style=”display:flex;justify-content:flex-end;margin-top:6px”>
-          <button class=”btn-primary js-understanding-save” style=”padding:5px 12px;font-size:11px;display:none”>保存</button>
+      <div class="drawer-section">
+        <div class="drawer-section-title">我的理解</div>
+        <textarea class="drawer-editable-area js-understanding-input" placeholder="写下你的理解...">真正的差异不在回答能力本身，而在于能否形成"输入-整理-沉淀-复用"的闭环，这也是产品长期壁垒。</textarea>
+        <div style="display:flex;justify-content:flex-end;margin-top:6px">
+          <button class="btn-primary js-understanding-save" style="padding:5px 12px;font-size:11px;display:none">保存</button>
         </div>
       </div>
-      <div class=”drawer-section”>
-        <div class=”drawer-section-title”>附件</div>
-        <div style=”display:flex;align-items:center;gap:8px;flex-wrap:wrap;”>
-          <div class=”qc-attach-chip”><span>📄</span><span>原始记录摘录.md</span></div>
-          <div class=”qc-attach-chip”><span>🖼</span><span>结构示意图.png</span></div>
-          <button class=”qc-attach-btn”>+ 添加附件</button>
+      <div class="drawer-section">
+        <div class="drawer-section-title">附件</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <div class="qc-attach-chip"><span>📄</span><span>原始记录摘录.md</span></div>
+          <div class="qc-attach-chip"><span>🖼</span><span>结构示意图.png</span></div>
+          <button class="qc-attach-btn">+ 添加附件</button>
         </div>
       </div>
-      <div class=”drawer-section”>
-        <div class=”drawer-section-title”>AI 笔记正文</div>
-        <div class=”note-body-list”>
-          <div class=”note-body-item” data-num=”1”>知识助手的长期价值，不在于像 ChatGPT 一样回答问题，而在于能把用户不断输入的材料，持续整理成可复用、可连接、可追溯的知识资产。</div>
-          <div class=”note-body-item” data-num=”2”>这条笔记真正提醒我的是，知识产品不能只强调搜索或问答。如果系统只能临时回答，它很容易被更强的通用模型替代；但如果它能维护知识状态、记录用户理解、形成回写闭环，它才会越来越像”用户自己的系统”。</div>
-          <div class=”note-body-item” data-num=”3”>放到产品表达里，这条结论可以直接复用：讲知识助手时，应优先强调”输入如何变成资产”，而不是只讲”能不能回答”。</div>
-          <div class=”note-body-item” data-num=”4”>可用于：产品方案、面试表达、竞品分析、知识库定位。</div>
+      <div class="drawer-section">
+        <div class="drawer-section-title">AI 笔记正文</div>
+        <div class="note-body-list">
+          <div class="note-body-item" data-num="1">知识助手的长期价值，不在于像 ChatGPT 一样回答问题，而在于能把用户不断输入的材料，持续整理成可复用、可连接、可追溯的知识资产。</div>
+          <div class="note-body-item" data-num="2">这条笔记真正提醒我的是，知识产品不能只强调搜索或问答。如果系统只能临时回答，它很容易被更强的通用模型替代；但如果它能维护知识状态、记录用户理解、形成回写闭环，它才会越来越像"用户自己的系统"。</div>
+          <div class="note-body-item" data-num="3">放到产品表达里，这条结论可以直接复用：讲知识助手时，应优先强调"输入如何变成资产"，而不是只讲"能不能回答"。</div>
+          <div class="note-body-item" data-num="4">可用于：产品方案、面试表达、竞品分析、知识库定位。</div>
         </div>
       </div>
-      <div class=”drawer-section”>
-        <div class=”drawer-section-title”>相关追问</div>
-        <div class=”related-question”>为什么知识状态管理比纯收藏更重要？</div>
-        <div class=”related-question”>如何设计回写闭环而不打扰用户？</div>
+      <div class="drawer-section">
+        <div class="drawer-section-title">相关追问</div>
+        <div class="related-question">为什么知识状态管理比纯收藏更重要？</div>
+        <div class="related-question">如何设计回写闭环而不打扰用户？</div>
       </div>
-      <div class=”drawer-section”>
-        <div class=”drawer-section-title”>引用依据</div>
-        <div class=”quote-block”>”助手的价值来自持续整理与回写，而不是一次性回答。”</div>
+      <div class="drawer-section">
+        <div class="drawer-section-title">引用依据</div>
+        <div class="quote-block">"助手的价值来自持续整理与回写，而不是一次性回答。"</div>
       </div>
-      <div class=”drawer-section”>
-        <div class=”drawer-section-title”>关联笔记</div>
-        <div class=”drawer-related-list”>
-          <div class=”drawer-related-item” onclick=”showKbDrawer('note-021')”><span class=”drawer-related-note”>[note-014] Transformer 笔记：长上下文…</span><span class=”drawer-related-type”>补充</span></div>
-          <div class=”drawer-related-item” onclick=”showKbDrawer('note-021')”><span class=”drawer-related-note”>[note-037] RAG 实验复盘</span><span class=”drawer-related-type”>对比</span></div>
-          <div class=”drawer-related-item” onclick=”showKbDrawer('note-021')”><span class=”drawer-related-note”>[note-045] 知识回写闭环设计</span><span class=”drawer-related-type”>延伸</span></div>
-          <div class=”drawer-related-item” onclick=”showKbDrawer('note-021')”><span class=”drawer-related-note”>[note-066] 只做聊天的助手方案</span><span class=”drawer-related-type”>反例</span></div>
-          <div class=”drawer-related-item” onclick=”showKbDrawer('note-021')”><span class=”drawer-related-note”>[note-103] 面试表达模板</span><span class=”drawer-related-type”>应用</span></div>
+      <div class="drawer-section">
+        <div class="drawer-section-title">关联笔记</div>
+        <div class="drawer-related-list">
+          <div class="drawer-related-item" onclick="showKbDrawer('note-021')"><span class="drawer-related-note">[note-014] Transformer 笔记：长上下文…</span><span class="drawer-related-type">补充</span></div>
+          <div class="drawer-related-item" onclick="showKbDrawer('note-021')"><span class="drawer-related-note">[note-037] RAG 实验复盘</span><span class="drawer-related-type">对比</span></div>
+          <div class="drawer-related-item" onclick="showKbDrawer('note-021')"><span class="drawer-related-note">[note-045] 知识回写闭环设计</span><span class="drawer-related-type">延伸</span></div>
+          <div class="drawer-related-item" onclick="showKbDrawer('note-021')"><span class="drawer-related-note">[note-066] 只做聊天的助手方案</span><span class="drawer-related-type">反例</span></div>
+          <div class="drawer-related-item" onclick="showKbDrawer('note-021')"><span class="drawer-related-note">[note-103] 面试表达模板</span><span class="drawer-related-type">应用</span></div>
         </div>
-        <div style=”font-size:10px;color:var(--text-muted);margin-top:8px;line-height:1.6”>点击任一关联笔记 → 直接切到该笔记详情；左侧星图同步切换为该笔记选中并高亮关联。</div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:8px;line-height:1.6">点击任一关联笔记 → 直接切到该笔记详情；左侧星图同步切换为该笔记选中并高亮关联。</div>
       </div>
       </div>
-      <div class=”drawer-actions kb-note-fixed-actions”>
-        <button class=”drawer-action-btn” onclick=”viewOriginal(2)”>查看原笔记</button>
-        <button class=”drawer-action-btn primary” onclick=”openNoteQuestionDrawer('${drawerName}','question-from-kb-note',2)”>基于此笔记提问</button>
-        <button class=”drawer-action-btn danger” onclick=”${deleteFn}”>删除</button>
+      <div class="drawer-actions kb-note-fixed-actions">
+        <button class="drawer-action-btn" onclick="viewOriginal(2)">查看原笔记</button>
+        <button class="drawer-action-btn primary" onclick="openNoteQuestionDrawer('${drawerName}','question-from-kb-note',2)">基于此笔记提问</button>
+        <button class="drawer-action-btn danger" onclick="${deleteFn}">删除</button>
       </div>
     `;
   } else {
     const titles = { 'ai-gen':'AI生成模型', agent:'Agent 设计', rag:'RAG 实践', ks:'知识系统', interview:'面试表达', growth:'个人成长' };
     inner.innerHTML = `
-      <div class=”drawer-header”>
-        <div class=”drawer-title”>主题：${titles[type]||type}</div>
-        <button class=”drawer-close” onclick=”closeDrawer('${drawerName}')”>×</button>
+      <div class="drawer-header">
+        <div class="drawer-title">主题：${titles[type]||type}</div>
+        <button class="drawer-close" onclick="closeDrawer('${drawerName}')">×</button>
       </div>
-      <div class=”drawer-section”>
-        <div class=”drawer-body-text”>该主题下共包含 ${Math.floor(Math.random()*15+5)} 条已内化笔记，${Math.floor(Math.random()*4+2)} 个子主题。点击各子主题节点查看笔记详情。</div>
+      <div class="drawer-section">
+        <div class="drawer-body-text">该主题下共包含 ${Math.floor(Math.random()*15+5)} 条已内化笔记，${Math.floor(Math.random()*4+2)} 个子主题。点击各子主题节点查看笔记详情。</div>
       </div>
-      <div style=”flex:1”></div>
-      <div class=”drawer-actions”>
-        <button class=”drawer-action-btn”>重命名</button>
-        <button class=”drawer-action-btn primary” onclick=”openNoteQuestionDrawer('${drawerName}')”>基于此主题提问</button>
+      <div style="flex:1"></div>
+      <div class="drawer-actions">
+        <button class="drawer-action-btn">重命名</button>
+        <button class="drawer-action-btn primary" onclick="openNoteQuestionDrawer('${drawerName}')">基于此主题提问</button>
       </div>
     `;
   }
@@ -2991,7 +2991,7 @@ function sendAiMessage() {
     chatData.push({
       role: 'assistant',
       time: new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}),
-      text: '根据当前知识库，我只找到了部分证据，不能支持完整结论。\n\n可确定的是：\n• 该问题与你收录的知识内化和 AI 产品设计笔记相关。\n• 现有材料能支持“输入变资产”的产品定位，但不足以证明更广泛的市场判断。\n\n不确定部分：缺少竞品样本和用户验证记录，暂不做无依据断言。',
+      text: '根据当前知识库，我只找到了部分证据，不能支持完整结论。\n\n可确定的是：\n• 该问题与你收录的知识内化和 AI 产品设计笔记相关。\n• 现有材料能支持"输入变资产"的产品定位，但不足以证明更广泛的市场判断。\n\n不确定部分：缺少竞品样本和用户验证记录，暂不做无依据断言。',
       refs: [
         { name: 'AI产品框架笔记', src: 'AI笔记 · 最新' },
       ]

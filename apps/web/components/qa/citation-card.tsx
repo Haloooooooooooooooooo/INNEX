@@ -3,18 +3,21 @@ interface CitationCardProps {
   title: string;
   excerpt: string;
   noteId: string;
+  source?: string;
+  onOpenNote?: (noteId: string) => void;
 }
 
-export function CitationCard({ index, title, excerpt }: CitationCardProps) {
+export function CitationCard({ index, title, excerpt, noteId, source, onOpenNote }: CitationCardProps) {
   return (
-    <div className="flex items-start gap-2 px-3 py-2 bg-[--paper] rounded-md text-xs">
-      <span className="font-mono text-[--innex-accent] font-semibold shrink-0 mt-px">
-        [{index}]
-      </span>
-      <div className="min-w-0">
-        <span className="font-medium text-[--ink]">{title}</span>
-        <span className="text-muted-foreground ml-1.5 line-clamp-1">{excerpt}</span>
-      </div>
-    </div>
+    <button
+      type="button"
+      onClick={() => onOpenNote?.(noteId)}
+      className="inline-flex max-w-full items-center gap-2 rounded-md border border-[--border-light] bg-[#F7F4EE] px-2.5 py-1 text-[11px] text-[--text-secondary] transition hover:border-[--innex-accent] hover:bg-[--innex-accent-dim] hover:text-[--ink]"
+      title={excerpt}
+    >
+      <span className="font-mono text-[10px] text-[--text-muted]">{index}.</span>
+      <span className="truncate font-medium text-[--ink]">{title}</span>
+      {source ? <span className="shrink-0 text-[10px] text-[--text-muted]">{source}</span> : null}
+    </button>
   );
 }

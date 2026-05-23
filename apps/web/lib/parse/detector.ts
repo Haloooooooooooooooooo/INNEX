@@ -1,54 +1,105 @@
-// Type detection + readability rules
+import { PARSE_RULES, type ParseNotReadableReason } from "./config";
 
 export type DetectResult = {
   type: "text" | "url" | "video" | "document" | "image" | "attachment_group";
-  readable: boolean | "partial"; // true = fully readable, false = not readable, "partial" = video (title readable, content not)
+  readable: boolean | "partial";
   source_url?: string;
+  reason?: ParseNotReadableReason;
 };
+
+type AttachmentLite = { name: string; type: string; size: number };
 
 export function detectType(
   content: string | null,
-  attachments: { name: string; type: string; size: number }[]
+  attachments: AttachmentLite[]
 ): DetectResult {
   const trimmed = content?.trim() || "";
 
-  // Content has a URL
-  const urlMatch = trimmed.match(/^(https?:\/\/[^\s]+)/);
+  const urlMatch = trimmed.match(/(https?:\/\/[^\s]+)/i);
   if (urlMatch) {
     const url = urlMatch[1];
-    if (/bilibili\.com|b23\.tv|youtube\.com|youtu\.be/i.test(url)) {
-      return { type: "video", readable: "partial", source_url: url };
+    if (isLikelyVideoUrl(url)) {
+      return {
+        type: "video",
+        readable: "partial",
+        source_url: url,
+        reason: "video_not_readable",
+      };
     }
     return { type: "url", readable: true, source_url: url };
   }
 
-  // Content is text (no URL)
-  if (trimmed && !urlMatch) {
-    if (trimmed.length < 50) {
-      return { type: "text", readable: false };
+  if (trimmed) {
+    if (trimmed.length < PARSE_RULES.TEXT_MIN_LENGTH) {
+      return { type: "text", readable: false, reason: "text_too_short" };
     }
     return { type: "text", readable: true };
   }
 
-  // No content — only attachments
   if (attachments.length === 1) {
     const a = attachments[0];
     if (a.type.startsWith("image/")) {
-      return { type: "image", readable: false }; // Phase 2: OCR ≤3 images
+      return { type: "image", readable: true };
     }
-    return { type: "document", readable: false }; // Phase 2: Docling for small files
+    if (a.size > PARSE_RULES.DOCUMENT_READ_MAX_BYTES) {
+      return { type: "document", readable: false, reason: "document_too_large" };
+    }
+    return { type: "document", readable: true };
   }
 
   if (attachments.length > 1) {
-    return { type: "attachment_group", readable: false }; // Phase 2: check total size
+    const allImages = attachments.every((a) => a.type.startsWith("image/"));
+    if (allImages) {
+      if (attachments.length > PARSE_RULES.IMAGE_READ_MAX_COUNT) {
+        return { type: "image", readable: false, reason: "image_too_many" };
+      }
+      return { type: "image", readable: true };
+    }
+
+    const totalBytes = attachments.reduce((acc, a) => acc + (a.size || 0), 0);
+    if (totalBytes >= PARSE_RULES.ATTACHMENT_GROUP_READ_MAX_BYTES) {
+      return {
+        type: "attachment_group",
+        readable: false,
+        reason: "attachment_group_too_large",
+      };
+    }
+    return { type: "attachment_group", readable: true };
   }
 
-  // Fallback (shouldn't happen — submit guard prevents this)
-  return { type: "text", readable: false };
+  return { type: "text", readable: false, reason: "text_too_short" };
 }
 
-// Map type to source label
-export function getSource(detected: DetectResult, url: string | null, attachments: { name: string }[]): string {
+function isLikelyVideoUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname.toLowerCase();
+
+    if (
+      /bilibili\.com|b23\.tv|youtube\.com|youtu\.be|douyin\.com|iesdouyin\.com|ixigua\.com|v\.qq\.com|youku\.com|iqiyi\.com|kuaishou\.com/i.test(
+        host
+      )
+    ) {
+      return true;
+    }
+
+    // Generic fallback: explicit video-like path or query.
+    if (/\/video\/|\/shorts\/|\/watch\/|\/reel\/|\/live\//i.test(path)) {
+      return true;
+    }
+    if (u.searchParams.has("v")) return true;
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+export function getSource(
+  detected: DetectResult,
+  url: string | null,
+  attachments: { name: string }[]
+): string {
   const { type, source_url } = detected;
   const u = source_url || url || "";
 
@@ -70,10 +121,5 @@ export function getSource(detected: DetectResult, url: string | null, attachment
 
   if (type === "image") return "图片";
 
-  if (type === "attachment_group") {
-    if (attachments.length === 1) return getSource({ type: "document", readable: false }, null, attachments);
-    return "附件组";
-  }
-
-  return "文字";
+  return "附件组";
 }

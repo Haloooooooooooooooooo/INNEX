@@ -1,6 +1,9 @@
+﻿import { randomUUID } from "crypto";
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { generateCompletion, generateEmbedding } from "@/lib/llm/client";
+import { ERROR_CODES, errorBody } from "@/lib/api/error-codes";
+import { withRetry } from "@/lib/llm/resilience";
 import {
   INTERNALIZE_SYSTEM,
   internalizeUserPrompt,
@@ -8,21 +11,27 @@ import {
 } from "@/lib/llm/prompts";
 
 export async function POST(request: Request) {
+  const traceId = randomUUID();
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      errorBody(ERROR_CODES.unauthorized, "Unauthorized", traceId),
+      { status: 401 }
+    );
   }
 
-  const { captureItemId } = await request.json();
+  const { captureItemId, dryRun = false, overrideMarkdown, includeVideo = false } = await request.json();
   if (!captureItemId) {
-    return NextResponse.json({ error: "captureItemId is required" }, { status: 400 });
+    return NextResponse.json(
+      errorBody(ERROR_CODES.bad_request, "captureItemId is required", traceId),
+      { status: 400 }
+    );
   }
 
-  // 1. Read the capture item
   const { data: item, error: itemError } = await supabase
     .from("capture_items")
     .select("*")
@@ -31,33 +40,103 @@ export async function POST(request: Request) {
     .single();
 
   if (itemError || !item) {
-    return NextResponse.json({ error: "Capture item not found" }, { status: 404 });
-  }
-
-  if (!item.raw_content) {
     return NextResponse.json(
-      { error: "Item has no content to internalize" },
-      { status: 400 }
+      errorBody(ERROR_CODES.not_found, "Capture item not found", traceId),
+      { status: 404 }
     );
   }
 
   try {
-    // 2. Generate structured markdown via DeepSeek
-    const userPrompt = internalizeUserPrompt(
-      item.title,
-      item.source,
-      item.raw_content,
-      item.my_understanding
-    );
-    const markdown = await generateCompletion(INTERNALIZE_SYSTEM, userPrompt);
+    console.info("[internalize] start", { trace_id: traceId, user_id: user.id, capture_item_id: item.id, dry_run: dryRun });
 
-    // 3. Extract concepts
+    const { data: attachments } = await supabase
+      .from("capture_item_attachments")
+      .select("file_name, mime_type")
+      .eq("capture_item_id", item.id)
+      .eq("user_id", user.id);
+
+    const attachmentContext =
+      attachments && attachments.length > 0
+        ? attachments
+            .map((a) => `${a.file_name}${a.mime_type ? ` (${a.mime_type})` : ""}`)
+            .join("\n")
+        : "";
+
+    const sourceContent = [
+      item.raw_content?.trim() || "",
+      item.summary?.trim() || "",
+      item.my_understanding?.trim() || "",
+      attachmentContext ? `附件列表:\n${attachmentContext}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    let videoEnrichment = "";
+    if (includeVideo && item.type === "video" && item.source_url) {
+      try {
+        const videoPrompt = [
+          "你是视频内容解析助手。",
+          "请基于下面的页面文字信息、标题和链接，输出“视频补充解析”。",
+          "要求：",
+          "1) 只输出中文 markdown；",
+          "2) 明确区分“可确定信息”和“推断信息”；",
+          "3) 输出结构：## 视频补充解析 / ### 可确定信息 / ### 推断信息 / ### 可能的行动建议。",
+          `标题：${item.title || "-"}`,
+          `来源：${item.source || "-"}`,
+          `链接：${item.source_url}`,
+          `页面文本：\n${sourceContent || "无"}`,
+        ].join("\n");
+
+        videoEnrichment = await withRetry(
+          () =>
+            generateCompletion(
+              "You are a careful video analysis assistant. Return Chinese markdown only.",
+              videoPrompt,
+              { temperature: 0.2, maxOutputTokens: 450, useCase: "internalize" }
+            ),
+          { attempts: 2, timeoutMs: 30000 }
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "video_parse_failed";
+        videoEnrichment = `## 视频补充解析\n\n视频补充解析失败：${msg}`;
+      }
+    }
+
+    const effectiveSourceContent =
+      sourceContent ||
+      `标题: ${item.title || "未命名记录"}\n来源: ${item.source || "-"}\n说明: 当前记录暂未提取出可读文本，先基于元信息生成内化草稿。`;
+
+    const internalizeInput = videoEnrichment
+      ? `${effectiveSourceContent}\n\n${videoEnrichment}`
+      : effectiveSourceContent;
+
+    const userPrompt = internalizeUserPrompt(item.title, item.source, internalizeInput, item.my_understanding);
+    let generatedMarkdown = "";
+    let generationError: string | null = null;
+    try {
+      generatedMarkdown = await withRetry(
+        () => generateCompletion(INTERNALIZE_SYSTEM, userPrompt, { useCase: "internalize" }),
+        { attempts: 2, timeoutMs: 30000 }
+      );
+    } catch (err: unknown) {
+      generationError = err instanceof Error ? err.message : "草稿生成失败";
+      generatedMarkdown = `# ${item.title || "未命名记录"}\n\n## 摘要\n${item.summary || "模型暂不可用，请手动补充摘要。"}\n\n## 我的理解\n${item.my_understanding || ""}\n\n## 原始内容\n${internalizeInput}`;
+    }
+    if (videoEnrichment && generatedMarkdown && !generatedMarkdown.includes("## 视频补充解析")) {
+      generatedMarkdown = `${generatedMarkdown}\n\n${videoEnrichment}`;
+    }
+    const markdown = typeof overrideMarkdown === "string" && overrideMarkdown.trim().length > 0 ? overrideMarkdown.trim() : generatedMarkdown;
+
     let concepts: string[] = [];
     try {
-      const conceptsRaw = await generateCompletion(
-        "You are a concept extraction assistant. Return ONLY a JSON array of strings.",
-        `${CONCEPT_EXTRACTION}\n\n内容:\n${markdown}`,
-        { temperature: 0.1, maxOutputTokens: 200 }
+      const conceptsRaw = await withRetry(
+        () =>
+          generateCompletion(
+            "You are a concept extraction assistant. Return ONLY a JSON array of strings.",
+            `${CONCEPT_EXTRACTION}\n\n内容:\n${markdown}`,
+            { temperature: 0.1, maxOutputTokens: 200, useCase: "internalize" }
+          ),
+        { attempts: 2, timeoutMs: 25000 }
       );
       const parsed = JSON.parse(conceptsRaw.trim());
       if (Array.isArray(parsed)) concepts = parsed;
@@ -65,14 +144,42 @@ export async function POST(request: Request) {
       concepts = [];
     }
 
-    // 4. Summary
-    const summary = await generateCompletion(
-      "你是一个摘要助手。用一句简洁的中文总结核心要点。",
-      `总结以下内容的核心要点：\n\n${markdown.substring(0, 2000)}`,
-      { temperature: 0.1, maxOutputTokens: 100 }
-    );
+    let summary = item.summary || "";
+    try {
+      summary = await withRetry(
+        () =>
+          generateCompletion(
+            "你是一个摘要助手。用一句简洁的中文总结核心要点。",
+            `总结以下内容的核心要点：\n\n${markdown.substring(0, 2000)}`,
+            { temperature: 0.1, maxOutputTokens: 100, useCase: "internalize" }
+          ),
+        { attempts: 2, timeoutMs: 20000 }
+      );
+    } catch {
+      // keep fallback summary
+    }
 
-    // 5. Save note
+    if (dryRun) {
+      console.info("[internalize] dry_run_success", { trace_id: traceId, user_id: user.id, capture_item_id: item.id });
+      return NextResponse.json(
+        {
+          draft: {
+            title: item.title,
+            content: markdown,
+            summary: summary.trim(),
+            concepts,
+            tags: item.tags || [],
+            source: item.source,
+            source_url: item.source_url || null,
+            generation_error: generationError,
+          },
+          status: "success",
+          trace_id: traceId,
+        },
+        { status: 200 }
+      );
+    }
+
     const { data: note, error: noteError } = await supabase
       .from("notes")
       .insert({
@@ -91,16 +198,22 @@ export async function POST(request: Request) {
 
     if (noteError || !note) {
       return NextResponse.json(
-        { error: noteError?.message || "Failed to create note" },
+        errorBody(
+          ERROR_CODES.internalize_failed,
+          noteError?.message || "Failed to create note",
+          traceId
+        ),
         { status: 500 }
       );
     }
 
-    // 6. Chunk + embed
     const chunks = chunkMarkdown(markdown);
     for (let i = 0; i < chunks.length; i++) {
       try {
-        const embedding = await generateEmbedding(chunks[i]);
+        const embedding = await withRetry(() => generateEmbedding(chunks[i]), {
+          attempts: 2,
+          timeoutMs: 20000,
+        });
         await supabase.from("note_chunks").insert({
           user_id: user.id,
           note_id: note.id,
@@ -110,11 +223,10 @@ export async function POST(request: Request) {
           token_count: Math.ceil(chunks[i].length / 2),
         });
       } catch {
-        // chunk insert failed, non-fatal
+        // non-fatal
       }
     }
 
-    // 7. Find similar notes via pgvector
     const relations: unknown[] = [];
     try {
       const firstChunk = await supabase
@@ -138,16 +250,44 @@ export async function POST(request: Request) {
             if (match.note_id === note.id || seenNoteIds.has(match.note_id)) continue;
             seenNoteIds.add(match.note_id);
 
-            const { data: rel } = await supabase
+            const similarity = Number((match as { similarity?: number }).similarity ?? 0.72);
+            const confidence = Math.max(0.5, Math.min(0.98, similarity));
+            let rel: unknown = null;
+            const insertPayload = {
+              user_id: user.id,
+              source_note_id: note.id,
+              target_note_id: match.note_id,
+              relation_type: "related",
+              confidence,
+              evidence: {
+                method: "embedding_similarity",
+                similarity,
+                source_chunk: 0,
+              },
+              is_auto_generated: true,
+            };
+
+            const insertNew = await supabase
               .from("note_relations")
-              .insert({
-                user_id: user.id,
-                source_note_id: note.id,
-                target_note_id: match.note_id,
-                relation_type: "related",
-              })
+              .insert(insertPayload)
               .select()
               .single();
+
+            if (insertNew.error && String(insertNew.error.message || "").includes("column")) {
+              const fallback = await supabase
+                .from("note_relations")
+                .insert({
+                  user_id: user.id,
+                  source_note_id: note.id,
+                  target_note_id: match.note_id,
+                  relation_type: "related",
+                })
+                .select()
+                .single();
+              rel = fallback.data;
+            } else {
+              rel = insertNew.data;
+            }
 
             if (rel) relations.push(rel);
             if (seenNoteIds.size >= 5) break;
@@ -155,23 +295,32 @@ export async function POST(request: Request) {
         }
       }
     } catch {
-      // Relation creation failed, non-fatal
+      // non-fatal
     }
 
-    // 8. Update capture_item status
     await supabase
       .from("capture_items")
       .update({ status: "crystallized", updated_at: new Date().toISOString() })
       .eq("id", item.id)
       .eq("user_id", user.id);
 
-    return NextResponse.json(
-      { note, relations, concepts, status: "success" },
-      { status: 201 }
-    );
+    console.info("[internalize] success", {
+      trace_id: traceId,
+      user_id: user.id,
+      capture_item_id: item.id,
+      note_id: note.id,
+      chunk_count: chunks.length,
+      relation_count: relations.length,
+    });
+
+    return NextResponse.json({ note, relations, concepts, status: "success", trace_id: traceId }, { status: 201 });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internalization failed";
-    return NextResponse.json({ error: message, status: "error" }, { status: 500 });
+    console.error("[internalize] failed", { trace_id: traceId, user_id: user.id, capture_item_id: item.id, error: message });
+    return NextResponse.json(
+      errorBody(ERROR_CODES.internalize_failed, message, traceId, { status: "error" }),
+      { status: 500 }
+    );
   }
 }
 

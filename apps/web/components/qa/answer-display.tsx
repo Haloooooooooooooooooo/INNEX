@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Button } from "@/components/ui/button";
 import { CitationCard } from "@/components/qa/citation-card";
@@ -9,23 +9,18 @@ interface AnswerDisplayProps {
   citations: AiAnswerCitation[];
   onSaveToNote: () => void;
   saved: boolean;
+  onOpenNote?: (noteId: string) => void;
 }
 
-export function AnswerDisplay({ answer, citations, onSaveToNote, saved }: AnswerDisplayProps) {
+export function AnswerDisplay({ answer, citations, onSaveToNote, saved, onOpenNote }: AnswerDisplayProps) {
   return (
-    <div className="bg-white rounded-xl border border-[--border-light] p-5 shadow-sm">
-      {/* Answer content */}
-      <div className="prose prose-sm max-w-none text-[--ink] leading-relaxed whitespace-pre-wrap">
-        {answer}
-      </div>
+    <div className="rounded-2xl border border-[--border-light] bg-white p-5 shadow-[0_6px_24px_rgba(0,0,0,0.06)]">
+      <div className="prose prose-sm max-w-none whitespace-pre-wrap text-[--ink] leading-relaxed">{answer}</div>
 
-      {/* Citations */}
       {citations.length > 0 && (
-        <div className="mt-5 pt-4 border-t border-[--border-light]">
-          <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-            引用来源
-          </h4>
-          <div className="flex flex-col gap-1.5">
+        <div className="mt-5 border-t border-[--border-light] pt-4">
+          <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[--text-muted]">引用依据</h4>
+          <div className="flex flex-wrap gap-1.5">
             {citations.map((c, i) => (
               <CitationCard
                 key={i}
@@ -33,22 +28,22 @@ export function AnswerDisplay({ answer, citations, onSaveToNote, saved }: Answer
                 title={c.title}
                 excerpt={c.excerpt}
                 noteId={c.note_id}
+                onOpenNote={onOpenNote}
               />
             ))}
           </div>
         </div>
       )}
 
-      {/* Save to note */}
-      <div className="mt-4 pt-3 border-t border-[--border-light] flex justify-end">
+      <div className="mt-4 flex justify-start border-t border-[--border-light] pt-3">
         <Button
           variant={saved ? "ghost" : "outline"}
           size="sm"
           onClick={onSaveToNote}
           disabled={saved}
-          className="text-xs"
+          className="h-7 rounded-md border-dashed text-xs text-[--innex-accent] hover:bg-[--innex-accent] hover:text-white"
         >
-          {saved ? "已保存" : "加入笔记"}
+          {saved ? "已保存" : "+ 加入笔记"}
         </Button>
       </div>
     </div>

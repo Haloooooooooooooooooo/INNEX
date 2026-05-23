@@ -11,11 +11,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [infoOpen, setInfoOpen] = useState(false);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="innex-shell flex flex-col">
       <TopBar calOpen={calOpen} onToggleCal={() => setCalOpen((v) => !v)} />
       <div className="flex flex-1 overflow-hidden">
         <Nav />
-        <main className="flex-1 overflow-auto bg-[--paper]">{children}</main>
+        <main className="innex-main-area flex-1 overflow-hidden">{children}</main>
       </div>
       <CalendarPopover
         open={calOpen}
