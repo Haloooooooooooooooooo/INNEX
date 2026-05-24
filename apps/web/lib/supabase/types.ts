@@ -140,6 +140,7 @@ export interface QaResponse {
   evidence_items?: Array<{ note_id: string; title: string; chunk_index: number }>;
   uncertainties?: string[];
   retrieval?: { topK: number; threshold: number };
+  retrieval_stage?: string;
   filters?: { tags: string[]; source?: string; dateGte?: string; dateLte?: string };
 }
 

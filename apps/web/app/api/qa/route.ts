@@ -53,6 +53,108 @@ function calcEvidence(chunks: Array<{ similarity: number }>): { score: number; l
   return { score: avg, level: "unknown" };
 }
 
+function extractQueryTerms(question: string): string[] {
+  const q = question.toLowerCase().trim();
+  const stop = new Set([
+    "请", "帮", "我", "一下", "一个", "这个", "那个", "关于", "什么", "怎么", "如何", "是否", "简单", "介绍", "讲讲",
+    "请问", "可以", "帮忙",
+  ]);
+  const latinTokens = q
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .filter((w) => !stop.has(w) && w.length >= 2);
+  const zhTerms = (q.match(/[\u4e00-\u9fa5]{2,12}/g) || [])
+    .flatMap((seg) => {
+      const s = seg.trim();
+      if (!s || stop.has(s)) return [];
+      const parts = [s];
+      if (s.length >= 3) parts.push(s.slice(0, 3));
+      if (s.length >= 4) parts.push(s.slice(-3));
+      return parts;
+    })
+    .filter((w) => !stop.has(w) && w.length >= 2);
+  return Array.from(new Set([...zhTerms, ...latinTokens])).slice(0, 8);
+}
+
+async function queryNotesByPatterns(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  patterns: string[],
+  columns: string
+) {
+  const merged = new Map<string, { id: string; title?: string; content?: string }>();
+  for (const pattern of patterns.slice(0, 5)) {
+    const safe = pattern.replace(/[%_]/g, "");
+    if (!safe) continue;
+    const { data } = await supabase
+      .from("notes")
+      .select(columns)
+      .eq("user_id", userId)
+      .or(`title.ilike.%${safe}%,summary.ilike.%${safe}%,content.ilike.%${safe}%`)
+      .order("created_at", { ascending: false })
+      .limit(8);
+    const rows = ((data || []) as unknown) as Array<{ id: string; title?: string; content?: string }>;
+    for (const row of rows) {
+      if (row?.id && !merged.has(row.id)) merged.set(row.id, row);
+    }
+  }
+  return Array.from(merged.values());
+}
+
+async function coarseRecallNotes(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  question: string
+): Promise<string[]> {
+  const terms = extractQueryTerms(question);
+  if (!terms.length) return [];
+  const rows = await queryNotesByPatterns(supabase, userId, terms, "id");
+  return rows.map((x) => x.id).filter(Boolean).slice(0, 20);
+}
+
+async function keywordFallbackRecall(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  question: string
+) {
+  const terms = extractQueryTerms(question);
+  if (!terms.length) return [] as Array<{
+    id: string;
+    note_id: string;
+    chunk_index: number;
+    content: string;
+    note_title: string;
+    similarity: number;
+  }>;
+
+  const notes = await queryNotesByPatterns(supabase, userId, terms, "id, title, content");
+  if (!notes.length) return [];
+
+  const rows = notes
+    .map((n) => {
+      const content = String(n.content || "");
+      const idx = terms
+        .map((t) => content.toLowerCase().indexOf(t))
+        .filter((x) => x >= 0)
+        .sort((a, b) => a - b)[0] ?? -1;
+      const start = idx >= 0 ? Math.max(0, idx - 120) : 0;
+      const excerpt = content.slice(start, start + 420).trim() || content.slice(0, 420).trim();
+      return {
+        id: `kw-${n.id}`,
+        note_id: n.id,
+        chunk_index: 0,
+        content: excerpt,
+        note_title: n.title || "未命名笔记",
+        similarity: 0.58,
+      };
+    })
+    .filter((x) => x.content.length > 20);
+
+  return rows;
+}
+
 function fuseChunks(
   chunks: Array<{
     id: string;
@@ -205,6 +307,7 @@ export async function POST(request: Request) {
     let evidenceLevel: "high" | "low" | "unknown" = "unknown";
     let evidenceScore = 0;
     let contradictionCount = 0;
+    let retrievalStage = "none";
 
     if (mode === "general") {
       answer = await withRetry(
@@ -266,19 +369,66 @@ export async function POST(request: Request) {
         similarity: number;
       }> = [];
 
-      try {
-        const { data } = await supabase.rpc("match_note_chunks", {
-          query_embedding: questionEmbedding,
-          match_threshold: threshold,
-          match_count: topK,
-          p_user_id: user.id,
-        });
-        if (data) chunks = data;
-      } catch (rpcErr) {
-        console.error("[qa] match_note_chunks unavailable", { trace_id: traceId, error: String(rpcErr) });
+      let vectorAvailable = true;
+
+      // Stage 1: coarse recall on title/summary.
+      const candidateNoteIds = await coarseRecallNotes(supabase, user.id, question);
+      console.info("[qa] coarse_recall", {
+        trace_id: traceId,
+        user_id: user.id,
+        candidate_count: candidateNoteIds.length,
+      });
+
+      // Stage 2: scoped vector recall in candidate notes.
+      if (candidateNoteIds.length > 0) {
+        try {
+          const scopedTopK = Math.max(topK, 10);
+          const scopedThreshold = Math.max(0.55, threshold - 0.08);
+          const { data: scopedData, error: scopedError } = await supabase.rpc("match_note_chunks_in_notes", {
+            query_embedding: questionEmbedding,
+            p_user_id: user.id,
+            p_note_ids: candidateNoteIds,
+            match_threshold: scopedThreshold,
+            match_count: scopedTopK,
+          });
+          if (!scopedError && scopedData?.length) {
+            chunks = scopedData;
+            retrievalStage = "scoped_vector";
+            console.info("[qa] scoped_vector_hit", {
+              trace_id: traceId,
+              user_id: user.id,
+              chunk_count: chunks.length,
+            });
+          }
+        } catch (err) {
+          console.warn("[qa] scoped_vector_failed", { trace_id: traceId, error: String(err) });
+        }
+      }
+
+      // Stage 3: global vector fallback.
+      if (!chunks.length) {
+        try {
+          const { data, error } = await supabase.rpc("match_note_chunks", {
+            query_embedding: questionEmbedding,
+            match_threshold: threshold,
+            match_count: topK,
+            p_user_id: user.id,
+          });
+          if (error) throw new Error(error.message || "match_note_chunks failed");
+          if (data?.length) {
+            chunks = data;
+            retrievalStage = "global_vector";
+          }
+        } catch (rpcErr) {
+          vectorAvailable = false;
+          console.error("[qa] match_note_chunks unavailable", { trace_id: traceId, error: String(rpcErr) });
+        }
+      }
+
+      if (!vectorAvailable && !chunks.length) {
         return NextResponse.json({
           code: ERROR_CODES.qa_vector_unavailable,
-          answer: "向量检索尚未配置。请先启用 pgvector 扩展并执行相关迁移。",
+          answer: "知识检索暂时不可用（网络或数据库连接异常）。请稍后重试。",
           citations: [],
           answerId: null,
           trace_id: traceId,
@@ -289,8 +439,50 @@ export async function POST(request: Request) {
           evidence_level: "low",
           evidence_score: 0,
           evidence_items: [],
-          uncertainties: ["知识库缺少相关证据。建议补充与你问题相关的沉淀笔记后再提问。"],
+          uncertainties: ["知识库检索链路异常，请稍后重试。"],
         });
+      }
+
+      // Adaptive fallback: if no result on strict retrieval, retry with relaxed threshold.
+      if (!chunks.length && !hasFilters(filters)) {
+        try {
+          const relaxedThreshold = Math.max(0.5, threshold - 0.12);
+          const relaxedTopK = Math.max(topK, 12);
+          const { data: retryData, error: retryError } = await supabase.rpc("match_note_chunks", {
+            query_embedding: questionEmbedding,
+            match_threshold: relaxedThreshold,
+            match_count: relaxedTopK,
+            p_user_id: user.id,
+          });
+          if (!retryError && retryData?.length) {
+            chunks = retryData;
+            retrievalStage = "adaptive_vector";
+            console.info("[qa] adaptive_recall_hit", {
+              trace_id: traceId,
+              user_id: user.id,
+              original_threshold: threshold,
+              retry_threshold: relaxedThreshold,
+              original_topk: topK,
+              retry_topk: relaxedTopK,
+              chunk_count: chunks.length,
+            });
+          }
+        } catch (retryErr) {
+          console.warn("[qa] adaptive_recall_failed", { trace_id: traceId, error: String(retryErr) });
+        }
+      }
+
+      if (!chunks.length) {
+        const keywordRows = await keywordFallbackRecall(supabase, user.id, question);
+        if (keywordRows.length) {
+          chunks = keywordRows;
+          retrievalStage = "keyword_fallback";
+          console.info("[qa] keyword_fallback_hit", {
+            trace_id: traceId,
+            user_id: user.id,
+            chunk_count: chunks.length,
+          });
+        }
       }
 
       if (hasFilters(filters) && chunks.length > 0) {
@@ -456,6 +648,7 @@ export async function POST(request: Request) {
         ...(contradictionCount > 0 ? [`检测到 ${contradictionCount} 条“互相矛盾”关系证据，请结合原文判断。`] : []),
       ],
       retrieval: { topK, threshold },
+      retrieval_stage: retrievalStage,
       filters,
     });
   } catch (err: unknown) {

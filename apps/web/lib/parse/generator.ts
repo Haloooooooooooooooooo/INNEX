@@ -36,7 +36,15 @@ function sanitizeInputText(content: string): string {
 
 function normalizeTags(tags: string[]): string[] {
   const generic = new Set([
-    "app", "浜у搧鎰忎箟", "鍦烘櫙", "鍐呭", "浜у搧", "鎶€鏈?, "绯荤粺", "骞冲彴", "妗嗘灦", "鐭ヨ瘑搴?,
+    "app",
+    "product",
+    "scenario",
+    "content",
+    "technology",
+    "system",
+    "platform",
+    "framework",
+    "knowledge",
   ]);
   const seen = new Set<string>();
   const out: string[] = [];
@@ -53,10 +61,11 @@ function normalizeTags(tags: string[]): string[] {
 }
 
 function fallbackTitle(content: string): string | null {
-  const normalized = content
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find(Boolean) || content.replace(/\s+/g, " ").trim();
+  const normalized =
+    content
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) || content.replace(/\s+/g, " ").trim();
   if (!normalized) return null;
   return normalized.slice(0, 30);
 }
@@ -72,11 +81,11 @@ function nowStampForTitle(): string {
 async function llmTitleFromContent(content: string): Promise<string | null> {
   if (!content.trim()) return null;
   try {
-    const title = await generateCompletion(
-      PARSE_TITLE_PROMPT,
-      parseTitleUserPrompt(content),
-      { temperature: 0.3, maxOutputTokens: 100, useCase: "parse" }
-    );
+    const title = await generateCompletion(PARSE_TITLE_PROMPT, parseTitleUserPrompt(content), {
+      temperature: 0.3,
+      maxOutputTokens: 100,
+      useCase: "parse",
+    });
     const normalized = title.trim().replace(/^["']|["']$/g, "").slice(0, 40);
     return normalized || null;
   } catch {
@@ -87,11 +96,11 @@ async function llmTitleFromContent(content: string): Promise<string | null> {
 async function llmSummary(content: string): Promise<string | null> {
   if (!content.trim()) return null;
   try {
-    return await generateCompletion(
-      PARSE_SUMMARY_PROMPT,
-      parseSummaryUserPrompt(content),
-      { temperature: 0.3, maxOutputTokens: 150, useCase: "parse" }
-    );
+    return await generateCompletion(PARSE_SUMMARY_PROMPT, parseSummaryUserPrompt(content), {
+      temperature: 0.3,
+      maxOutputTokens: 150,
+      useCase: "parse",
+    });
   } catch {
     return null;
   }
@@ -100,11 +109,11 @@ async function llmSummary(content: string): Promise<string | null> {
 async function llmTags(content: string): Promise<string[]> {
   if (!content.trim()) return ["-"];
   try {
-    const rawTags = await generateCompletion(
-      PARSE_TAGS_PROMPT,
-      parseTagsUserPrompt(content),
-      { temperature: 0.3, maxOutputTokens: 200, useCase: "parse" }
-    );
+    const rawTags = await generateCompletion(PARSE_TAGS_PROMPT, parseTagsUserPrompt(content), {
+      temperature: 0.3,
+      maxOutputTokens: 200,
+      useCase: "parse",
+    });
     const parsed = JSON.parse(rawTags.trim());
     if (!Array.isArray(parsed) || parsed.length === 0) return ["-"];
     return parsed.slice(0, 3);
@@ -117,11 +126,19 @@ async function llmSummaryWithError(content: string): Promise<{ value: string | n
   if (!content.trim()) return { value: null, error: "empty_input" };
   const prompt = parseSummaryUserPrompt(content);
   return llmWithParseFallback("summary", prompt, PARSE_SUMMARY_PROMPT, {
+    maxOutputTokens: 180,
+    postprocess: (value) => {
+      const normalized = (value || "").trim();
+      return normalized ? normalized : null;
+    },
+    emptyError: "summary_empty",
+  });
+}
+
 function parseTagsFromModelOutput(raw: string): string[] | null {
   const text = (raw || "").trim();
   if (!text) return null;
 
-  // strict JSON first
   try {
     const parsed = JSON.parse(text);
     if (Array.isArray(parsed)) {
@@ -132,7 +149,6 @@ function parseTagsFromModelOutput(raw: string): string[] | null {
     // continue with tolerant parsing
   }
 
-  // tolerate malformed JSON like ["a","b","c]
   const bracketMatch = text.match(/\[([\s\S]*?)\]/);
   const payload = bracketMatch ? bracketMatch[1] : text;
   const tags = payload
@@ -141,6 +157,18 @@ function parseTagsFromModelOutput(raw: string): string[] | null {
     .filter(Boolean);
   const normalized = normalizeTags(tags);
   return normalized.length > 0 ? normalized : null;
+}
+
+async function llmTagsWithError(content: string): Promise<{ value: string[]; error?: string }> {
+  if (!content.trim()) return { value: ["-"], error: "empty_input" };
+  const prompt = parseTagsUserPrompt(compressContentForTags(content));
+  const result = await llmWithParseFallback("tags", prompt, PARSE_TAGS_PROMPT, {
+    maxOutputTokens: 220,
+    postprocess: parseTagsFromModelOutput,
+    emptyError: "tags_empty",
+  });
+  if (result.value && result.value.length > 0) return { value: result.value };
+  return { value: ["-"], error: result.error || "tags_empty" };
 }
 
 function heuristicTagsFromText(content: string): string[] {
@@ -153,8 +181,33 @@ function heuristicTagsFromText(content: string): string[] {
   const words = [...zhWords, ...enWords];
 
   const stop = new Set([
-    "这个", "那个", "我们", "你们", "他们", "进行", "以及", "或者", "因为", "所以", "如果", "可以", "一个", "主要",
-    "about", "with", "from", "that", "this", "have", "will", "your", "into", "then", "than", "when", "where",
+    "这个",
+    "那个",
+    "我们",
+    "你们",
+    "他们",
+    "进行",
+    "以及",
+    "或者",
+    "因为",
+    "所以",
+    "如果",
+    "可以",
+    "一个",
+    "主要",
+    "about",
+    "with",
+    "from",
+    "that",
+    "this",
+    "have",
+    "will",
+    "your",
+    "into",
+    "then",
+    "than",
+    "when",
+    "where",
   ]);
 
   const freq = new Map<string, number>();
@@ -170,6 +223,7 @@ function heuristicTagsFromText(content: string): string[] {
       .map(([k]) => k)
   );
 }
+
 function normalizeModelError(message: string): string {
   const m = message.toLowerCase();
   if (m.includes("ssl") || m.includes("tls") || m.includes("handshake")) return "model_network_error";
@@ -281,13 +335,13 @@ export async function parseContent(
       if (tagsResult.error) debug.notes.push(`tags_error:${tagsResult.error}`);
     }
   } else if (type === "video") {
-    summary = "璇ラ摼鎺ユ槸瑙嗛锛屽唴鍖栦箣鍚庢墠鑳界敓鎴?;
+    summary = "This link is a video. Summary will be available after processing.";
   } else if (type === "document") {
-    summary = "鏂囦欢杩囧ぇ锛屽唴鍖栧悗鎵嶈兘鐢熸垚";
+    summary = "Document is large. Summary will be available after processing.";
   } else if (type === "image") {
-    summary = "鍥剧墖澶锛屽唴鍖栧悗鎵嶈兘璇诲彇";
+    summary = "Image content needs processing before it can be summarized.";
   } else if (type === "attachment_group") {
-    summary = "闄勪欢澶ぇ锛屽唴鍖栧悗鎵嶈兘璇诲彇";
+    summary = "Attachments need processing before summary is available.";
   } else {
     summary = null;
   }
@@ -300,7 +354,7 @@ export async function parseContent(
       title = (await llmTitleFromContent(raw)) || fallbackTitle(raw) || raw.slice(0, 5) || "-";
     }
   } else if (type === "document") {
-    title = attachments[0]?.name || "鏂囨。";
+    title = attachments[0]?.name || "Document";
   } else if (type === "url" || type === "video") {
     if (urlTitle?.trim()) {
       title = urlTitle.trim();
@@ -311,20 +365,27 @@ export async function parseContent(
     }
   } else if (type === "image") {
     if (canGenerateFromText) {
-      title = (await llmTitleFromContent(raw)) || fallbackTitle(raw) || `${nowStampForTitle()}鍥剧墖`;
+      title = (await llmTitleFromContent(raw)) || fallbackTitle(raw) || `${nowStampForTitle()} Image`;
     } else {
-      title = `${nowStampForTitle()}鍥剧墖`;
+      title = `${nowStampForTitle()} Image`;
     }
   } else if (type === "attachment_group") {
     if (attachments.length > 1) {
-      title = `${nowStampForTitle()}闄勪欢缁刞;
+      title = `${nowStampForTitle()} Attachments`;
     } else if (attachments.length === 1) {
-      title = attachments[0].name || `${nowStampForTitle()}闄勪欢缁刞;
+      title = attachments[0].name || `${nowStampForTitle()} Attachment`;
     } else {
-      title = `${nowStampForTitle()}闄勪欢缁刞;
+      title = `${nowStampForTitle()} Attachment`;
+    }
+  }
+
+  if (tags.length === 1 && tags[0] === "-" && canGenerateFromText) {
+    const fallback = heuristicTagsFromText(raw);
+    if (fallback.length > 0) {
+      tags = fallback;
+      debug.notes.push("tags_heuristic_fallback_used");
     }
   }
 
   return { title, source, summary, tags, debug };
 }
-
