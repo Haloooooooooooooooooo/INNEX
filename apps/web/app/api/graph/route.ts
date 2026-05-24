@@ -30,6 +30,7 @@ type GraphEdge = {
 };
 
 export async function GET(request: NextRequest) {
+  const startedAt = Date.now();
   const supabase = await createClient();
   const {
     data: { user },
@@ -43,7 +44,11 @@ export async function GET(request: NextRequest) {
   const search = searchParams.get("search")?.trim() || "";
   const tag = searchParams.get("tag")?.trim() || "";
   const concept = searchParams.get("concept")?.trim() || "";
+  const mode = (searchParams.get("mode")?.trim() || "note").toLowerCase();
   const focusNoteId = searchParams.get("focusNoteId")?.trim() || null;
+  const centerNoteId = searchParams.get("centerNoteId")?.trim() || null;
+  const rawHops = Number(searchParams.get("hops") || "0");
+  const hops = Number.isFinite(rawHops) ? Math.max(0, Math.min(4, Math.floor(rawHops))) : 0;
 
   const rawLimit = Number(searchParams.get("limit"));
   const limit = Number.isFinite(rawLimit)
@@ -179,15 +184,119 @@ export async function GET(request: NextRequest) {
     degree: degreeMap.get(n.id) || 0,
   }));
 
+  let finalNodes = nodes;
+  let finalEdges = edges;
+  if (centerNoteId && hops > 0) {
+    const adjacency = new Map<string, Set<string>>();
+    for (const n of nodes) adjacency.set(n.id, new Set<string>());
+    for (const e of edges) {
+      adjacency.get(e.source)?.add(e.target);
+      adjacency.get(e.target)?.add(e.source);
+    }
+
+    const visited = new Set<string>([centerNoteId]);
+    let frontier = new Set<string>([centerNoteId]);
+    for (let i = 0; i < hops; i++) {
+      const next = new Set<string>();
+      for (const id of frontier) {
+        for (const nei of adjacency.get(id) || []) {
+          if (!visited.has(nei)) {
+            visited.add(nei);
+            next.add(nei);
+          }
+        }
+      }
+      frontier = next;
+      if (frontier.size === 0) break;
+    }
+    finalNodes = nodes.filter((n) => visited.has(n.id));
+    const allowed = new Set(finalNodes.map((n) => n.id));
+    finalEdges = edges.filter((e) => allowed.has(e.source) && allowed.has(e.target));
+  }
+
+  const relationTypeCounts = finalEdges.reduce<Record<string, number>>((acc, e) => {
+    acc[e.type] = (acc[e.type] || 0) + 1;
+    return acc;
+  }, {});
+
+  const confidenceStats = {
+    high: finalEdges.filter((e) => typeof e.confidence === "number" && e.confidence >= 0.75).length,
+    mid: finalEdges.filter((e) => typeof e.confidence === "number" && e.confidence >= 0.6 && e.confidence < 0.75).length,
+    low: finalEdges.filter((e) => typeof e.confidence === "number" && e.confidence < 0.6).length,
+    unknown: finalEdges.filter((e) => typeof e.confidence !== "number").length,
+  };
+
+  const durationMs = Date.now() - startedAt;
+  console.info("[graph.api]", {
+    user_id: user.id,
+    node_count: finalNodes.length,
+    edge_count: finalEdges.length,
+    duration_ms: durationMs,
+    truncated: (count || 0) > limit,
+    center_note_id: centerNoteId,
+    hops,
+  });
+
+  let outputNodes: Array<Record<string, unknown>> = finalNodes;
+  let outputEdges: Array<Record<string, unknown>> = finalEdges;
+
+  if (mode === "entity") {
+    const entityNodes = new Map<string, { id: string; label: string; degree: number; kind: string }>();
+    const entityEdges = new Map<string, { id: string; source: string; target: string; type: string; confidence: number | null; createdAt: string }>();
+
+    const noteConcepts = new Map<string, string[]>();
+    for (const n of finalNodes) {
+      const concepts = [...(n.concepts || []), ...(n.tags || [])].filter(Boolean).slice(0, 10);
+      noteConcepts.set(n.id, concepts);
+      for (const c of concepts) {
+        const id = `ent:${c}`;
+        const old = entityNodes.get(id);
+        entityNodes.set(id, { id, label: c, degree: (old?.degree || 0) + 1, kind: "entity" });
+      }
+    }
+
+    for (const e of finalEdges) {
+      const a = noteConcepts.get(e.source) || [];
+      const b = noteConcepts.get(e.target) || [];
+      for (const ca of a) {
+        for (const cb of b) {
+          if (ca === cb) continue;
+          const s = `ent:${ca}`;
+          const t = `ent:${cb}`;
+          const key = s < t ? `${s}|${t}|${e.type}` : `${t}|${s}|${e.type}`;
+          if (!entityEdges.has(key)) {
+            entityEdges.set(key, {
+              id: `ee:${entityEdges.size + 1}`,
+              source: s,
+              target: t,
+              type: e.type,
+              confidence: e.confidence,
+              createdAt: e.createdAt,
+            });
+          }
+        }
+      }
+    }
+
+    outputNodes = Array.from(entityNodes.values());
+    outputEdges = Array.from(entityEdges.values());
+  }
+
   return NextResponse.json({
-    nodes,
-    edges,
+    nodes: outputNodes,
+    edges: outputEdges,
     meta: {
-      nodeCount: nodes.length,
-      edgeCount: edges.length,
+      nodeCount: outputNodes.length,
+      edgeCount: outputEdges.length,
       truncated: (count || 0) > limit,
       limit,
       focusNoteId,
+      centerNoteId,
+      hops,
+      mode,
+      durationMs,
+      relationTypeCounts,
+      confidenceStats,
     },
   });
 }

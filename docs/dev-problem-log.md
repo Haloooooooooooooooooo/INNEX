@@ -118,6 +118,81 @@
 - 思路复盘：
   - “原文”和“识别结果”必须分层，避免概念混淆。
 - 后续动作：补齐附件真实文件预览（图片直出、文档在线预览）。
+
+---
+
+## 2026-05-24｜PDF 录入解析长链路不稳定（从不可用到可用的完整排障）
+
+- 模块：收录箱录入 / PDF 解析 / 模型摘要标签 / 本地开发环境
+- 现象：
+  - 我上传图片时，记录能创建，但 `model_summary_succeeded/model_tags_succeeded` 与真实状态不一致（显示成功但实际是兜底文案）。
+  - 我上传 PDF 时频繁出现 422（`PDF_PARSE_REQUIRED_FAILED`），随后又出现“录入中长时间不返回”。
+  - Next.js dev（Turbopack）还出现缓存损坏，导致本地服务不稳定。
+- 影响：P0（核心录入链路不稳定，直接影响我继续做 vibe coding 的节奏）
+
+- 我遇到的核心困难点：
+  1. 故障不是单点，而是“多段链路同时波动”：前端 dev 缓存、PDF 服务、OCR worker、模型超时交织在一起。
+  2. 日志里“成功”和“失败”信号混在一起，容易误判（例如兜底文案把状态伪装成成功）。
+  3. parser-service 首次运行要下载模型，初始化慢，导致我主观上觉得“卡死”。
+  4. 同一个问题在不同阶段表现不同：先 422、再 201 但内容空、再 201 且有内容。
+
+- 我是怎么一步步解决的（我的动作）：
+  1. 先盯结构化日志，不猜：
+  - 我持续看 `[capture-items.parse-result]` 的 `input_source/extracted_chars/notes/model_*`。
+  - 我用 `notes` 逐条定位：`pdf_parser_service_unavailable`、`pdf_ocr_failed`、`required_pdf_failed`、`image_*_forced_fallback`。
+  2. 先保主链路“可收录”：
+  - 我把“基础设施失败”从硬拦截里剥离，确保先 201 落库，不因 OCR/服务故障直接 422。
+  3. 再修状态真实性：
+  - 我把图片兜底逻辑改成“可兜底但不伪造成功状态”，让 debug 能反映真实模型结果。
+  4. 解决可重试能力：
+  - 我让 `retry-parse` 支持 `raw_content=null` 的图片，从附件 URL 重跑视觉识别。
+  5. 解决 parser-service 不稳定：
+  - 我重建 venv、单独启动 parser-service（切到 8012）、并把 web 端 `PARSER_SERVICE_URL` 对齐到 8012。
+  - 我把 parser-service 改成延迟初始化，避免启动阶段卡死健康检查。
+  6. 解决“录入中卡住”：
+  - 我给 `parsePdfWithService` 加了可配置超时 `PARSER_SERVICE_TIMEOUT_MS`，避免无限等待。
+  7. 解决本地环境噪音：
+  - 我清理了 `apps/web/.next/dev` 与 `apps/web/.next/cache`，修复 Turbopack 缓存损坏。
+  8. 最后做质量优化：
+  - 我做了文本控制字符清洗与标签泛词过滤，减少 PDF 提取脏字符对摘要/标签质量的影响。
+
+- 我采取的方案（最终落地）：
+  1. 可用性优先：硬失败改软降级，先保证记录创建成功。
+  2. 真实性优先：debug 状态必须反映“模型真实成功/失败”，不能被兜底掩盖。
+  3. 可恢复优先：失败后可重试（图片支持从附件重跑）。
+  4. 可观测优先：以 `notes` 为诊断主线，所有关键分支都打可读标记。
+  5. 可调优优先：超时、端口、模型都改为可配置，避免每次改代码。
+
+- 经验教训（这次最值钱的）：
+  1. 先把“能不能收录”与“能不能高质量解析”拆开处理，先救主流程，再做质量。
+  2. 多模块故障时，必须靠结构化日志收敛，不要凭体感判断。
+  3. 本地 AI 依赖首次下载是常态，首次慢不等于挂；要区分“慢”与“不可达”。
+  4. dev 缓存损坏会伪装成业务 bug，环境层要优先排除。
+  5. 兜底策略必须配套真实状态字段，否则后续排障会被误导。
+
+- 下次可复用的操作清单（我可以直接照抄）：
+  1. 先看 `capture-items.parse-result`：重点 `input_source/extracted_chars/model_*` 与 `notes`。
+  2. 检查 parser-service：
+  - `GET /health` 是否秒回；
+  - `PARSER_SERVICE_URL` 端口是否对齐；
+  - 首次启动是否在下载模型。
+  3. 若前端长时间“录入中”：
+  - 检查服务端是否有超时保护；
+  - 检查是否在等待外部解析服务。
+  4. 若本地 Next 异常：
+  - 清理 `.next/dev` + `.next/cache` 后重启 dev。
+  5. 若模型阶段波动：
+  - 提升 tags 重试/超时配置；
+  - 保留启发式标签兜底，避免空标签。
+  6. 每次修复后都看一条完整新样本，确认从“日志正确”到“业务结果正确”都成立。
+
+- 关联文件（本次高频）：
+  - `apps/web/app/api/capture-items/route.ts`
+  - `apps/web/app/api/capture-items/[id]/retry-parse/route.ts`
+  - `apps/web/lib/parse/generator.ts`
+  - `apps/web/.env.local`
+  - `parser-service/main.py`
+  - `parser-service/run-parser-service.bat`
 - 关联文件：
   - `apps/web/components/inbox/inbox-table.tsx`
   - `apps/web/components/inbox/inbox-drawer.tsx`

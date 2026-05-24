@@ -1,4 +1,4 @@
-import { generateCompletion } from "@/lib/llm/client";
+﻿import { generateCompletion } from "@/lib/llm/client";
 import { withRetry } from "@/lib/llm/resilience";
 import { hasProviderKey } from "@/lib/llm/provider";
 import {
@@ -25,6 +25,32 @@ export type ParsedFields = {
     notes: string[];
   };
 };
+
+function sanitizeInputText(content: string): string {
+  return content
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .replace(/\uFFFD/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeTags(tags: string[]): string[] {
+  const generic = new Set([
+    "app", "浜у搧鎰忎箟", "鍦烘櫙", "鍐呭", "浜у搧", "鎶€鏈?, "绯荤粺", "骞冲彴", "妗嗘灦", "鐭ヨ瘑搴?,
+  ]);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of tags) {
+    const v = (t || "").trim();
+    if (!v || v.length <= 1) continue;
+    if (generic.has(v.toLowerCase()) || generic.has(v)) continue;
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+    if (out.length >= 3) break;
+  }
+  return out;
+}
 
 function fallbackTitle(content: string): string | null {
   const normalized = content
@@ -91,31 +117,6 @@ async function llmSummaryWithError(content: string): Promise<{ value: string | n
   if (!content.trim()) return { value: null, error: "empty_input" };
   const prompt = parseSummaryUserPrompt(content);
   return llmWithParseFallback("summary", prompt, PARSE_SUMMARY_PROMPT, {
-    maxOutputTokens: 150,
-    postprocess: (v) => v?.trim() || null,
-    emptyError: "empty_summary",
-  });
-}
-
-async function llmTagsWithError(content: string): Promise<{ value: string[]; error?: string }> {
-  if (!content.trim()) return { value: ["-"], error: "empty_input" };
-  const prompt = parseTagsUserPrompt(content);
-  const res = await llmWithParseFallback("tags", prompt, PARSE_TAGS_PROMPT, {
-    maxOutputTokens: 200,
-    postprocess: (v) => parseTagsFromModelOutput(v),
-    emptyError: "empty_or_invalid_json_array",
-  });
-  if (Array.isArray(res.value) && res.value.length > 0) return { value: res.value };
-
-  // hard fallback: if model returns empty/invalid, still generate tags from text heuristically
-  const fallback = heuristicTagsFromText(content);
-  if (fallback.length > 0) {
-    return { value: fallback };
-  }
-
-  return { value: ["-"], error: res.error || "model_unavailable" };
-}
-
 function parseTagsFromModelOutput(raw: string): string[] | null {
   const text = (raw || "").trim();
   if (!text) return null;
@@ -124,7 +125,7 @@ function parseTagsFromModelOutput(raw: string): string[] | null {
   try {
     const parsed = JSON.parse(text);
     if (Array.isArray(parsed)) {
-      const tags = parsed.filter((x) => typeof x === "string").map((x) => x.trim()).filter(Boolean).slice(0, 3);
+      const tags = normalizeTags(parsed.filter((x) => typeof x === "string").map((x) => x.trim()).filter(Boolean));
       if (tags.length > 0) return tags;
     }
   } catch {
@@ -137,9 +138,9 @@ function parseTagsFromModelOutput(raw: string): string[] | null {
   const tags = payload
     .split(/[,\n，、]/)
     .map((x) => x.replace(/["'`[\]]/g, "").trim())
-    .filter(Boolean)
-    .slice(0, 3);
-  return tags.length > 0 ? tags : null;
+    .filter(Boolean);
+  const normalized = normalizeTags(tags);
+  return normalized.length > 0 ? normalized : null;
 }
 
 function heuristicTagsFromText(content: string): string[] {
@@ -152,7 +153,7 @@ function heuristicTagsFromText(content: string): string[] {
   const words = [...zhWords, ...enWords];
 
   const stop = new Set([
-    "这个", "那个", "我们", "你们", "他们", "进行", "以及", "或者", "因为", "所以", "如果", "可以", "一个", "一些", "主要",
+    "这个", "那个", "我们", "你们", "他们", "进行", "以及", "或者", "因为", "所以", "如果", "可以", "一个", "主要",
     "about", "with", "from", "that", "this", "have", "will", "your", "into", "then", "than", "when", "where",
   ]);
 
@@ -163,12 +164,12 @@ function heuristicTagsFromText(content: string): string[] {
     freq.set(t, (freq.get(t) || 0) + 1);
   }
 
-  return Array.from(freq.entries())
-    .sort((a, b) => b[1] - a[1])
-    .map(([k]) => k)
-    .slice(0, 3);
+  return normalizeTags(
+    Array.from(freq.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([k]) => k)
+  );
 }
-
 function normalizeModelError(message: string): string {
   const m = message.toLowerCase();
   if (m.includes("ssl") || m.includes("tls") || m.includes("handshake")) return "model_network_error";
@@ -186,6 +187,7 @@ async function llmWithParseFallback<T>(
     maxOutputTokens: number;
     postprocess: (value: string) => T | null;
     emptyError: string;
+    retry?: { attempts: number; timeoutMs: number; retryDelayMs: number };
   }
 ): Promise<{ value: T | null; error?: string }> {
   const providerOrder = ["deepseek"] as const;
@@ -208,7 +210,7 @@ async function llmWithParseFallback<T>(
             useCase: "parse",
             provider,
           }),
-        { attempts: 4, timeoutMs: 25000, retryDelayMs: 800 }
+        options.retry || { attempts: 2, timeoutMs: 12000, retryDelayMs: 500 }
       );
       const parsed = options.postprocess(raw);
       if (parsed !== null) return { value: parsed };
@@ -227,6 +229,16 @@ async function llmWithParseFallback<T>(
   return { value: null, error: lastError };
 }
 
+function compressContentForTags(content: string): string {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 2200) return normalized;
+  const head = normalized.slice(0, 1000);
+  const midStart = Math.max(0, Math.floor(normalized.length / 2) - 300);
+  const middle = normalized.slice(midStart, midStart + 600);
+  const tail = normalized.slice(-600);
+  return `${head}\n...\n${middle}\n...\n${tail}`;
+}
+
 export async function parseContent(
   contentForParsing: string | null,
   urlTitle: string | null,
@@ -234,7 +246,7 @@ export async function parseContent(
   detected: DetectResult,
   attachments: { name: string; type: string; size: number }[]
 ): Promise<ParsedFields> {
-  const raw = (contentForParsing || "").trim();
+  const raw = sanitizeInputText((contentForParsing || "").trim());
   const source = getSource(detected, sourceUrl || null, attachments);
   const { type, readable } = detected;
 
@@ -269,13 +281,13 @@ export async function parseContent(
       if (tagsResult.error) debug.notes.push(`tags_error:${tagsResult.error}`);
     }
   } else if (type === "video") {
-    summary = "该链接是视频，内化之后才能生成";
+    summary = "璇ラ摼鎺ユ槸瑙嗛锛屽唴鍖栦箣鍚庢墠鑳界敓鎴?;
   } else if (type === "document") {
-    summary = "文件过大，内化后才能生成";
+    summary = "鏂囦欢杩囧ぇ锛屽唴鍖栧悗鎵嶈兘鐢熸垚";
   } else if (type === "image") {
-    summary = "图片太多，内化后才能读取";
+    summary = "鍥剧墖澶锛屽唴鍖栧悗鎵嶈兘璇诲彇";
   } else if (type === "attachment_group") {
-    summary = "附件太大，内化后才能读取";
+    summary = "闄勪欢澶ぇ锛屽唴鍖栧悗鎵嶈兘璇诲彇";
   } else {
     summary = null;
   }
@@ -288,7 +300,7 @@ export async function parseContent(
       title = (await llmTitleFromContent(raw)) || fallbackTitle(raw) || raw.slice(0, 5) || "-";
     }
   } else if (type === "document") {
-    title = attachments[0]?.name || "文档";
+    title = attachments[0]?.name || "鏂囨。";
   } else if (type === "url" || type === "video") {
     if (urlTitle?.trim()) {
       title = urlTitle.trim();
@@ -299,19 +311,20 @@ export async function parseContent(
     }
   } else if (type === "image") {
     if (canGenerateFromText) {
-      title = (await llmTitleFromContent(raw)) || fallbackTitle(raw) || `${nowStampForTitle()}图片`;
+      title = (await llmTitleFromContent(raw)) || fallbackTitle(raw) || `${nowStampForTitle()}鍥剧墖`;
     } else {
-      title = `${nowStampForTitle()}图片`;
+      title = `${nowStampForTitle()}鍥剧墖`;
     }
   } else if (type === "attachment_group") {
     if (attachments.length > 1) {
-      title = `${nowStampForTitle()}附件组`;
+      title = `${nowStampForTitle()}闄勪欢缁刞;
     } else if (attachments.length === 1) {
-      title = attachments[0].name || `${nowStampForTitle()}附件组`;
+      title = attachments[0].name || `${nowStampForTitle()}闄勪欢缁刞;
     } else {
-      title = `${nowStampForTitle()}附件组`;
+      title = `${nowStampForTitle()}闄勪欢缁刞;
     }
   }
 
   return { title, source, summary, tags, debug };
 }
+

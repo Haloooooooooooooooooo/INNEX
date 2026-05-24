@@ -267,7 +267,7 @@ function safeParseVisionJson(raw: string): { summary?: string; tags?: string[] }
 function getOcrConfig() {
   const baseURL = (process.env.OCR_OPENAI_BASE_URL || EMBEDDING_ENDPOINT.baseURL || providerBaseURL("openai")).replace(/\/$/, "");
   const apiKey = process.env.OCR_OPENAI_API_KEY || EMBEDDING_ENDPOINT.apiKey || LLM_PROVIDERS.openai.apiKey;
-  const modelPrimary = process.env.OCR_OPENAI_MODEL || "Qwen/Qwen2.5-VL-7B-Instruct";
+  const modelPrimary = process.env.OCR_OPENAI_MODEL || "Qwen/Qwen3-Omni-30B-A3B-Instruct";
   // keep OCR deterministic: only use explicitly configured model
   const candidates = [modelPrimary]
     .filter(Boolean)

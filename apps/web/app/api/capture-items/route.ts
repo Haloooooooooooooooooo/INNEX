@@ -5,6 +5,10 @@ import { parseContent } from "@/lib/parse/generator";
 import { PARSE_RULES } from "@/lib/parse/config";
 import { analyzeImageForSummaryAndTags, extractTextFromImageDataUrl } from "@/lib/llm/client";
 import { extractDocumentTextDetailed } from "@/lib/parse/document-extractor";
+import { PDFParse } from "pdf-parse";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 type CaptureItemInsertPayload = {
   user_id: string;
@@ -260,6 +264,39 @@ export async function POST(request: Request) {
   // For URL types, use the fetched page content rather than just the URL string
   const extraction = await extractReadableTextFromFiles(uploadedFiles, detected);
   const extractedFromFiles = extraction.text;
+
+  // Hard rule (requested): if PDF file is within read threshold, extraction must succeed.
+  // Otherwise fail fast and do not create this capture item.
+  const smallPdfFiles = uploadedFiles.filter(
+    (f) => f.name.toLowerCase().endsWith(".pdf") && f.size <= PARSE_RULES.DOCUMENT_READ_MAX_BYTES
+  );
+  const requiredPdfFailNotes = extraction.notes.filter((n) => n.startsWith("required_pdf_failed:"));
+  const requiredPdfFailed = requiredPdfFailNotes.length > 0;
+  const hasPdfInfraFailure =
+    extraction.notes.some((n) => n.includes("PDF_PARSE_SERVICE_UNREACHABLE")) ||
+    extraction.notes.some((n) => n.startsWith("pdf_ocr_failed:") && n.includes("Setting up fake worker failed"));
+  const shouldEnforcePdfHardFail = requiredPdfFailed && !hasPdfInfraFailure;
+  if (
+    smallPdfFiles.length > 0 &&
+    (shouldEnforcePdfHardFail || (!hasPdfInfraFailure && !(extractedFromFiles && extractedFromFiles.trim().length > 0)))
+  ) {
+    const requiredFail = requiredPdfFailNotes[0];
+    const ocrFail = extraction.notes.find((n) => n.startsWith("pdf_ocr_failed:"));
+    const ocrEmpty = extraction.notes.find((n) => n.startsWith("pdf_ocr_empty:"));
+    const renderFail = extraction.notes.find((n) => n.startsWith("doc_extract_failed:"));
+    const detail =
+      [ocrFail, ocrEmpty, renderFail, requiredFail].find(Boolean) ||
+      extraction.notes.find((n) => n.startsWith("doc_extract_empty:")) ||
+      "PDF_PARSE_REQUIRED_FAILED";
+    return NextResponse.json(
+      {
+        error: "阈值范围内 PDF 解析失败，请重试或更换文件后再上传",
+        error_code: "PDF_PARSE_REQUIRED_FAILED",
+        detail,
+      },
+      { status: 422 }
+    );
+  }
   const detectedForParsing =
     extractedFromFiles && extractedFromFiles.trim().length > 0
       ? { ...detected, readable: true as const }
@@ -295,6 +332,8 @@ export async function POST(request: Request) {
     )
   ) {
     try {
+      parsed.debug.model_summary_attempted = true;
+      parsed.debug.model_tags_attempted = true;
       const firstImage = uploadedFiles.find((f) => f.type.startsWith("image/"));
       if (firstImage) {
         const dataUrl = await fileToDataUrl(firstImage);
@@ -317,17 +356,16 @@ export async function POST(request: Request) {
   }
 
   if (detected.type === "image") {
-    // Hard guarantee: always produce summary/tags for image captures.
+    // Hard guarantee: always produce summary/tags placeholders for image captures.
+    // Keep model_*_succeeded as the real model outcome so retry decisions stay accurate.
     if (!parsed.debug.model_summary_succeeded) {
       parsed.summary =
         "已收录图片内容。当前OCR/视觉模型暂不可用或未开通，系统已保留原图，后续可重试识别并补全摘要。";
       parsed.debug.notes.push("image_summary_forced_fallback");
-      parsed.debug.model_summary_succeeded = true;
     }
     if (!parsed.debug.model_tags_succeeded) {
       parsed.tags = ["图片", "待识别", "补全"];
       parsed.debug.notes.push("image_tags_forced_fallback");
-      parsed.debug.model_tags_succeeded = true;
     }
   }
   const persistedRawContent =
@@ -495,6 +533,7 @@ export async function POST(request: Request) {
       origin,
       request,
       itemId: fullItem.id,
+      itemType: detected.type,
       parseDebugNotes: parseDebug.notes,
       hasReadableText: Boolean(persistedRawContent && persistedRawContent.trim().length > 0),
     });
@@ -512,6 +551,7 @@ export async function POST(request: Request) {
     origin,
     request,
     itemId: fullItem.id,
+    itemType: detected.type,
     parseDebugNotes: parseDebug.notes,
     hasReadableText: Boolean(persistedRawContent && persistedRawContent.trim().length > 0),
   });
@@ -523,13 +563,18 @@ function maybeTriggerParseRetry(input: {
   origin: string;
   request: Request;
   itemId: string;
+  itemType: string;
   parseDebugNotes: string[] | undefined;
   hasReadableText: boolean;
 }) {
-  const { origin, request, itemId, parseDebugNotes, hasReadableText } = input;
-  if (!hasReadableText) return;
+  const { origin, request, itemId, itemType, parseDebugNotes, hasReadableText } = input;
   const notes = Array.isArray(parseDebugNotes) ? parseDebugNotes : [];
-  const shouldRetry = notes.some((n) => n.startsWith("summary_error:") || n.startsWith("tags_error:"));
+  const shouldRetry =
+    notes.some((n) => n.startsWith("summary_error:") || n.startsWith("tags_error:")) ||
+    notes.some((n) => n.startsWith("image_vision_summary_failed:")) ||
+    notes.includes("image_summary_forced_fallback") ||
+    notes.includes("image_tags_forced_fallback");
+  if (!hasReadableText && itemType !== "image") return;
   if (!shouldRetry) return;
 
   const cookie = request.headers.get("cookie") || "";
@@ -545,7 +590,7 @@ async function extractReadableTextFromFiles(
   files: File[],
   detected: ReturnType<typeof detectType>
 ): Promise<{ text: string | null; notes: string[] }> {
-  const notes: string[] = ["extractor_version:pdfjs_v2"];
+  const notes: string[] = ["extractor_version:pdfjs_v7_ocr_fallback"];
   if (!files.length) return { text: null, notes: ["no_uploaded_files"] };
   if (!(detected.readable === true || detected.readable === "partial")) {
     return { text: null, notes: ["type_not_readable_in_capture"] };
@@ -556,6 +601,7 @@ async function extractReadableTextFromFiles(
   let imageOcrSucceeded = 0;
   let docExtractAttempted = 0;
   let docExtractSucceeded = 0;
+  let hasPdfInfraFailure = false;
 
   for (const file of files) {
     if (chunks.join("\n").length > 12000) break;
@@ -582,9 +628,30 @@ async function extractReadableTextFromFiles(
     if (file.size <= PARSE_RULES.DOCUMENT_READ_MAX_BYTES) {
       docExtractAttempted += 1;
       try {
+        if (file.name.toLowerCase().endsWith(".pdf")) {
+          const external = await parsePdfWithService(file);
+          if (external.ok && external.text) {
+            chunks.push(external.text.slice(0, 6000));
+            docExtractSucceeded += 1;
+            notes.push(`pdf_parser_service_ok:${file.name}:chars=${external.text.length}`);
+            continue;
+          }
+          if (external.errorCode && external.errorCode !== "PDF_PARSE_SERVICE_UNREACHABLE") {
+            notes.push(`required_pdf_failed:${file.name}:service_${external.errorCode}`);
+            notes.push(`pdf_parser_service_failed:${file.name}:${external.detail || external.errorCode}`);
+            continue;
+          }
+          hasPdfInfraFailure = true;
+          notes.push(`pdf_parser_service_unavailable:${file.name}:${external.detail || external.errorCode || "unreachable"}`);
+        }
+
         const extracted = await extractDocumentTextDetailed(file);
         const text = extracted.text;
-        if (extracted.meta.strategy === "pdf_text" || extracted.meta.strategy === "pdf_low_text") {
+        if (
+          extracted.meta.strategy === "pdf_text" ||
+          extracted.meta.strategy === "pdf_low_text" ||
+          extracted.meta.strategy === "pdf_heuristic"
+        ) {
           notes.push(
             `pdf_extract_meta:${file.name}:strategy=${extracted.meta.strategy},pages=${extracted.meta.page_count || 0},chars=${extracted.meta.extracted_chars},cpp=${extracted.meta.chars_per_page || 0}`
           );
@@ -593,9 +660,52 @@ async function extractReadableTextFromFiles(
           }
         }
         if (text && text.trim()) {
+          if (extracted.meta.strategy === "pdf_heuristic" && file.name.toLowerCase().endsWith(".pdf")) {
+            notes.push(`pdf_heuristic_untrusted:${file.name}`);
+            const ocrText = await tryPdfOcrFallback(file, notes);
+            if (ocrText && evaluateExtractedTextQuality(ocrText).ok) {
+              chunks.push(ocrText.slice(0, 6000));
+              docExtractSucceeded += 1;
+              notes.push(`pdf_ocr_fallback_preferred_over_heuristic:${file.name}`);
+              continue;
+            }
+            if (hasPdfInfraFailure) {
+              chunks.push(text.slice(0, 6000));
+              docExtractSucceeded += 1;
+              notes.push(`pdf_heuristic_low_confidence_accepted:${file.name}`);
+              continue;
+            }
+            notes.push(`required_pdf_failed:${file.name}:heuristic_untrusted_and_ocr_failed`);
+            continue;
+          }
+          const quality = evaluateExtractedTextQuality(text);
+          if (!quality.ok) {
+            notes.push(`doc_extract_garbled:${file.name}:${quality.reason}`);
+            if (file.name.toLowerCase().endsWith(".pdf")) {
+              const ocrText = await tryPdfOcrFallback(file, notes);
+              if (ocrText && evaluateExtractedTextQuality(ocrText).ok) {
+                chunks.push(ocrText.slice(0, 6000));
+                docExtractSucceeded += 1;
+                notes.push(`pdf_ocr_fallback_used:${file.name}`);
+                continue;
+              }
+              notes.push(`required_pdf_failed:${file.name}:garbled_and_ocr_failed`);
+            }
+            continue;
+          }
           chunks.push(text.slice(0, 6000));
           docExtractSucceeded += 1;
         } else {
+          if (file.name.toLowerCase().endsWith(".pdf")) {
+            const ocrText = await tryPdfOcrFallback(file, notes);
+            if (ocrText && evaluateExtractedTextQuality(ocrText).ok) {
+              chunks.push(ocrText.slice(0, 6000));
+              docExtractSucceeded += 1;
+              notes.push(`pdf_ocr_fallback_used:${file.name}`);
+              continue;
+            }
+            notes.push(`required_pdf_failed:${file.name}:empty_and_ocr_failed`);
+          }
           notes.push(`doc_extract_empty:${file.name}`);
         }
       } catch (err) {
@@ -612,6 +722,134 @@ async function extractReadableTextFromFiles(
   if (docExtractSucceeded > 0) notes.push(`doc_extract_succeeded:${docExtractSucceeded}`);
   if (!merged) notes.push("file_extract_no_text");
   return { text: merged || null, notes };
+}
+
+async function parsePdfWithService(file: File): Promise<{ ok: boolean; text?: string; errorCode?: string; detail?: string }> {
+  const base = process.env.PARSER_SERVICE_URL?.trim();
+  if (!base) return { ok: false };
+  const timeoutMs = Number(process.env.PARSER_SERVICE_TIMEOUT_MS || "120000");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 120000);
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${base.replace(/\/$/, "")}/parse/pdf`, {
+      method: "POST",
+      body: form,
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        ok: false,
+        errorCode: typeof data?.error_code === "string" ? data.error_code : `HTTP_${res.status}`,
+        detail: typeof data?.detail === "string" ? data.detail : "",
+      };
+    }
+    const text = typeof data?.text === "string" ? data.text.trim() : "";
+    if (!text) return { ok: false, errorCode: "PDF_PARSE_EMPTY_TEXT", detail: "service_empty_text" };
+    return { ok: true, text };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "service_unreachable";
+    const isAbort = err instanceof Error && err.name === "AbortError";
+    return {
+      ok: false,
+      errorCode: isAbort ? "PDF_PARSE_SERVICE_TIMEOUT" : "PDF_PARSE_SERVICE_UNREACHABLE",
+      detail: msg.slice(0, 200),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function evaluateExtractedTextQuality(text: string): { ok: boolean; reason: string } {
+  const s = text.trim();
+  if (!s) return { ok: false, reason: "empty" };
+  if (s.length < 80) return { ok: false, reason: "too_short" };
+
+  const suspiciousTokens = ["锟斤拷", "鈥", "��", "Ã", "Â", "¤"];
+  const suspiciousHits = suspiciousTokens.reduce((acc, t) => acc + (s.split(t).length - 1), 0);
+  if (suspiciousHits >= 6) return { ok: false, reason: "suspicious_token_high" };
+
+  const meaningful = (s.match(/[\u4e00-\u9fffA-Za-z0-9]/g) || []).length;
+  const total = s.length;
+  const ratio = total > 0 ? meaningful / total : 0;
+  if (ratio < 0.25) return { ok: false, reason: "meaningful_ratio_low" };
+
+  const uniqueChars = new Set(s.replace(/\s+/g, "").split(""));
+  if (uniqueChars.size <= 10 && s.length > 200) return { ok: false, reason: "low_char_diversity" };
+
+  return { ok: true, reason: "ok" };
+}
+
+async function tryPdfOcrFallback(file: File, notes: string[]): Promise<string | null> {
+  try {
+    ensurePdfParseWorkerConfigured(notes);
+    const bytes = Buffer.from(await file.arrayBuffer());
+    const parser = new PDFParse({ data: bytes });
+    try {
+      const screenshot = await parser.getScreenshot({
+        first: 3,
+        imageDataUrl: true,
+        imageBuffer: false,
+      } as Record<string, unknown>);
+
+      const pages = Array.isArray((screenshot as { pages?: unknown[] }).pages)
+        ? ((screenshot as { pages?: unknown[] }).pages as unknown[])
+        : [];
+      const chunks: string[] = [];
+      for (const page of pages) {
+        const dataUrl =
+          (page && typeof page === "object" && "dataUrl" in page && typeof (page as { dataUrl?: unknown }).dataUrl === "string"
+            ? (page as { dataUrl: string }).dataUrl
+            : null) ||
+          (page && typeof page === "object" && "data" in page && typeof (page as { data?: unknown }).data === "string"
+            ? (page as { data: string }).data
+            : null);
+        if (!dataUrl) continue;
+        const text = await extractTextFromImageDataUrl(dataUrl);
+        if (text?.trim()) chunks.push(text.trim());
+      }
+      const merged = chunks.join("\n\n").trim();
+      if (!merged) {
+        notes.push(`pdf_ocr_empty:${file.name}`);
+        return null;
+      }
+      notes.push(`pdf_ocr_chars:${file.name}:${merged.length}`);
+      return merged;
+    } finally {
+      await parser.destroy();
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "pdf_ocr_failed";
+    if (msg.includes("Setting up fake worker failed")) {
+      notes.push(`pdf_ocr_worker_runtime_missing:${file.name}`);
+    }
+    notes.push(`pdf_ocr_failed:${file.name}:${msg.slice(0, 120)}`);
+    return null;
+  }
+}
+
+let pdfParseWorkerConfigured = false;
+function ensurePdfParseWorkerConfigured(notes: string[]) {
+  if (pdfParseWorkerConfigured) return;
+  try {
+    const envWorker = process.env.PDF_OCR_WORKER_URL?.trim();
+    const cwdWorkerPath = join(process.cwd(), "node_modules", "pdf-parse", "dist", "pdf-parse", "web", "pdf.worker.min.mjs");
+    const repoWorkerPath = join(process.cwd(), "..", "..", "node_modules", "pdf-parse", "dist", "pdf-parse", "web", "pdf.worker.min.mjs");
+    const localWorkerPath = existsSync(cwdWorkerPath) ? cwdWorkerPath : (existsSync(repoWorkerPath) ? repoWorkerPath : null);
+    const workerSrc = envWorker
+      ? envWorker
+      : localWorkerPath
+        ? pathToFileURL(localWorkerPath).href
+        : "https://cdn.jsdelivr.net/npm/pdf-parse@2.4.5/dist/pdf-parse/web/pdf.worker.min.mjs";
+    PDFParse.setWorker(workerSrc);
+    notes.push(envWorker ? "pdf_ocr_worker_configured:env" : (localWorkerPath ? "pdf_ocr_worker_configured:local" : "pdf_ocr_worker_configured:cdn"));
+    pdfParseWorkerConfigured = true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "unknown";
+    notes.push(`pdf_ocr_worker_config_failed:${msg.slice(0, 120)}`);
+  }
 }
 
 async function fileToDataUrl(file: File): Promise<string> {

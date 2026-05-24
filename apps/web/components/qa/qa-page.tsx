@@ -15,6 +15,12 @@ type RenderMessage = {
   citations?: AiAnswerCitation[];
   saved?: boolean;
   answerId?: string | null;
+  intent?: string;
+  evidenceLevel?: "high" | "low" | "unknown";
+  evidenceScore?: number;
+  uncertainties?: string[];
+  retrieval?: { topK: number; threshold: number };
+  filters?: { tags: string[]; source?: string; dateGte?: string; dateLte?: string };
 };
 
 type NotePreview = {
@@ -32,6 +38,23 @@ function hhmm(iso?: string) {
 
 function noteDisplayId(noteId: string) {
   return `note-${noteId.slice(0, 3).toLowerCase()}`;
+}
+
+function intentToZh(intent?: string) {
+  switch (intent) {
+    case "fact_query":
+      return "事实查询";
+    case "summary":
+      return "总结归纳";
+    case "comparison":
+      return "对比决策";
+    case "action_advice":
+      return "执行建议";
+    case "retrospective":
+      return "复盘反思";
+    default:
+      return intent || "未识别";
+  }
 }
 
 export function QaPage() {
@@ -156,6 +179,12 @@ export function QaPage() {
         citations: data.citations || [],
         answerId: data.answerId,
         saved: false,
+        intent: data.intent,
+        evidenceLevel: data.evidence_level,
+        evidenceScore: data.evidence_score,
+        uncertainties: data.uncertainties || [],
+        retrieval: data.retrieval,
+        filters: data.filters,
       };
       setMessages((prev) => [...prev, aiMsg]);
       await loadSessions();
@@ -270,13 +299,69 @@ export function QaPage() {
                 </div>
                 <div className="max-w-[860px]">
                   <div className="mb-1 text-[10px] text-[--text-muted]">{msg.at}</div>
+                  <div className="mb-1.5 flex items-center gap-1.5 text-[10px]">
+                    {msg.intent ? (
+                      <span className="rounded border border-[--border-light] bg-[#f5efe7] px-1.5 py-0.5 text-[--text-secondary]">
+                        意图: {intentToZh(msg.intent)}
+                      </span>
+                    ) : null}
+                    {msg.evidenceLevel ? (
+                      <span
+                        className={`rounded px-1.5 py-0.5 ${
+                          msg.evidenceLevel === "high"
+                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            : msg.evidenceLevel === "low"
+                              ? "bg-amber-50 text-amber-700 border border-amber-200"
+                              : "bg-gray-50 text-gray-600 border border-gray-200"
+                        }`}
+                      >
+                        证据: {msg.evidenceLevel}
+                      </span>
+                    ) : null}
+                    {typeof msg.evidenceScore === "number" ? (
+                      <span className="rounded border border-[--border-light] bg-white px-1.5 py-0.5 text-[--text-secondary]">
+                        证据分: {Math.round(msg.evidenceScore * 100)}%
+                      </span>
+                    ) : null}
+                    {msg.retrieval ? (
+                      <span className="rounded border border-[--border-light] bg-white px-1.5 py-0.5 text-[--text-secondary]">
+                        检索: K={msg.retrieval.topK} / 阈值={msg.retrieval.threshold}
+                      </span>
+                    ) : null}
+                    {msg.filters && (msg.filters.tags.length || msg.filters.source || msg.filters.dateGte || msg.filters.dateLte) ? (
+                      <span className="rounded border border-[--border-light] bg-white px-1.5 py-0.5 text-[--text-secondary]">
+                        过滤已启用
+                      </span>
+                    ) : null}
+                  </div>
                   <AnswerDisplay
                     answer={msg.text}
                     citations={msg.citations || []}
                     saved={msg.saved ?? !msg.answerId}
                     onSaveToNote={() => void handleSaveToNote(msg)}
                     onOpenNote={openNoteDetail}
+                    evidenceLevel={msg.evidenceLevel}
                   />
+                  {msg.uncertainties?.length ? (
+                    <div className="mt-1 space-y-1">
+                      {msg.uncertainties.map((u, i) => {
+                        const isConflict = u.includes("矛盾");
+                        return (
+                          <div
+                            key={`${msg.id}-u-${i}`}
+                            className={`inline-flex items-center rounded px-2 py-1 text-[11px] ${
+                              isConflict
+                                ? "border border-red-200 bg-red-50 text-red-700"
+                                : "border border-amber-200 bg-amber-50 text-amber-700"
+                            }`}
+                          >
+                            {isConflict ? "冲突证据提醒：" : "不确定项："}
+                            {u}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             )

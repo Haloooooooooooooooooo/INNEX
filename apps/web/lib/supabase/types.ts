@@ -93,6 +93,9 @@ export interface AiAnswerCitation {
   chunk_index: number;
   title: string;
   excerpt: string;
+  source?: "knowledge" | "web";
+  url?: string;
+  fetched_at?: string;
 }
 
 export interface AiAnswer {
@@ -130,6 +133,14 @@ export interface QaResponse {
   answerId: string | null;
   sessionId?: string;
   mode?: "notes" | "general" | "online";
+  intent?: "fact_query" | "summary" | "comparison" | "action_advice" | "retrospective";
+  intentConfidence?: number;
+  evidence_level?: "high" | "low" | "unknown";
+  evidence_score?: number;
+  evidence_items?: Array<{ note_id: string; title: string; chunk_index: number }>;
+  uncertainties?: string[];
+  retrieval?: { topK: number; threshold: number };
+  filters?: { tags: string[]; source?: string; dateGte?: string; dateLte?: string };
 }
 
 export interface QaSession {

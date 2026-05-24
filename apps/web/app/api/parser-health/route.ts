@@ -15,7 +15,7 @@ export async function GET() {
     env: {
       ocr_base_url: Boolean(process.env.OCR_OPENAI_BASE_URL || process.env.EMBEDDING_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL),
       ocr_api_key: Boolean(process.env.OCR_OPENAI_API_KEY || process.env.EMBEDDING_OPENAI_API_KEY || process.env.OPENAI_API_KEY),
-      ocr_model: process.env.OCR_OPENAI_MODEL || "Qwen/Qwen2.5-VL-7B-Instruct",
+      ocr_model: process.env.OCR_OPENAI_MODEL || "Qwen/Qwen3-Omni-30B-A3B-Instruct",
     },
     pdfjs: {
       ok: false,
@@ -46,4 +46,3 @@ export async function GET() {
     { status: ok ? 200 : 503 }
   );
 }
-
