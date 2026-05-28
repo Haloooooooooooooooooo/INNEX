@@ -86,11 +86,14 @@ export async function GET(request: NextRequest) {
       .eq("user_id", user.id)
       .in("id", captureIds as string[]);
     const statusMap = new Map<string, string>((captureRows || []).map((x) => [x.id, x.status]));
-    noteList = noteList.filter((n) => {
-      if (!n.capture_item_id) return true;
-      return statusMap.get(n.capture_item_id) === "crystallized";
-    });
+    // Strict mode: only show crystallized notes in graph.
+    noteList = noteList.filter((n) => !!n.capture_item_id && statusMap.get(n.capture_item_id) === "crystallized");
+  } else {
+    noteList = [];
   }
+
+  // Safety de-duplication by note id.
+  noteList = Array.from(new Map(noteList.map((n) => [n.id, n])).values());
   if (noteList.length === 0) {
     return NextResponse.json({
       nodes: [],

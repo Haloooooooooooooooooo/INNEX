@@ -303,7 +303,7 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
           <button
             type="submit"
             disabled={!canSubmit}
-            className="bg-[--innex-accent] text-white border border-[--innex-accent] rounded-[9px] px-[16px] py-2 font-sans text-[12px] font-bold cursor-pointer transition-all duration-200 flex items-center gap-1 whitespace-nowrap shadow-[0_6px_14px_rgba(241,90,36,0.22)] hover:bg-white hover:text-[--innex-accent] hover:-translate-y-px hover:shadow-[0_9px_18px_rgba(241,90,36,0.28)] active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-[#FF5A00] text-[#FFFFFF] border border-[#FF5A00] rounded-[9px] px-[16px] py-2 font-sans text-[12px] font-black tracking-[0.015em] antialiased cursor-pointer transition-all duration-120 flex items-center gap-1 whitespace-nowrap shadow-[0_6px_14px_rgba(255,90,0,0.32)] hover:bg-[#F05400] hover:border-[#F05400] hover:text-[#FFFFFF] hover:shadow-[0_8px_16px_rgba(255,90,0,0.38)] active:bg-[#DD4C00] active:border-[#DD4C00] disabled:opacity-45 disabled:cursor-not-allowed"
           >
             {urlFetching ? "正在读取页面..." : savingCount > 0 ? "添加记录" : "添加记录"}
             <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">

@@ -29,6 +29,8 @@ interface InboxDrawerProps {
   isAnyInternalizing?: boolean;
   onDraftStarted?: () => void;
   onDraftStartFailed?: (message: string) => void;
+  onDraftFlowExit?: () => void;
+  onInternalizeSaved?: () => void;
 }
 
 function formatTime(iso: string) {
@@ -62,6 +64,8 @@ export function InboxDrawer({
   isAnyInternalizing = false,
   onDraftStarted,
   onDraftStartFailed,
+  onDraftFlowExit,
+  onInternalizeSaved,
 }: InboxDrawerProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [understanding, setUnderstanding] = useState("");
@@ -127,6 +131,14 @@ export function InboxDrawer({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item?.id, startInternalizeForItemId]);
+
+  useEffect(() => {
+    // If internalization session is active for this item, reopening drawer should return to draft mode.
+    if (!item || !open || !internalizing) return;
+    if (draftMode || qaMode) return;
+    enterDraftMode();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id, open, internalizing]);
 
   useEffect(() => {
     if (!item || item.status !== "crystallized") return;
@@ -266,6 +278,7 @@ export function InboxDrawer({
 
   function exitDraftMode() {
     setDraftMode(false);
+    onDraftFlowExit?.();
   }
 
   async function saveDraft() {
@@ -321,6 +334,7 @@ export function InboxDrawer({
           delete next[itemId];
           return next;
         });
+        onInternalizeSaved?.();
         setFinalizingInternalize(false);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "保存内化失败";

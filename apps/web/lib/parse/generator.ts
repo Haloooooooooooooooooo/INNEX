@@ -166,6 +166,7 @@ async function llmTagsWithError(content: string): Promise<{ value: string[]; err
     maxOutputTokens: 220,
     postprocess: parseTagsFromModelOutput,
     emptyError: "tags_empty",
+    retry: { attempts: 3, timeoutMs: 25000, retryDelayMs: 700 },
   });
   if (result.value && result.value.length > 0) return { value: result.value };
   return { value: ["-"], error: result.error || "tags_empty" };

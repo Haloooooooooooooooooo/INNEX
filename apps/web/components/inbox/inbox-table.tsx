@@ -119,7 +119,7 @@ export function InboxTable({ items, loading, onSelect, onAskFromItem, onStatusCh
   }
 
   return (
-    <div className="bg-[--paper-light] flex-1 min-h-0 overflow-hidden flex flex-col relative" onClick={closeContextMenu}>
+    <div className="bg-[--paper-light] h-full flex-1 min-h-0 overflow-hidden flex flex-col relative" onClick={closeContextMenu}>
       <table className="w-full text-[12px] shrink-0">
         <thead>
           <tr className="border-b border-[--border-light] bg-[#eee8de]">
@@ -136,7 +136,7 @@ export function InboxTable({ items, loading, onSelect, onAskFromItem, onStatusCh
         </thead>
       </table>
 
-      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+      <div className="list-scrollbar h-full flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
         <table className="w-full text-[12px]">
           <tbody>
             {items.map((item) => {

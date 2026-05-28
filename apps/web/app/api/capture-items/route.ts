@@ -311,19 +311,19 @@ export async function POST(request: Request) {
   const detectedForParsing =
     extractedFromFiles && extractedFromFiles.trim().length > 0
       ? { ...detected, readable: true as const }
+      : ((detected.type === "url" || detected.type === "video") && !effectiveUrlContent)
+        ? { ...detected, readable: false as const }
       : detected;
   const parseInputSource =
     effectiveUrlContent ? "url_content" :
     extractedFromFiles ? "file_extracted_text" :
     (typeof attachment_extracted_text === "string" && attachment_extracted_text.trim()) ? "attachment_extracted_text" :
-    (typeof content === "string" && content.trim()) ? "content" :
-    "none";
+    ((detected.type === "url" || detected.type === "video") ? "none" : ((typeof content === "string" && content.trim()) ? "content" : "none"));
   const parseContent_input =
     effectiveUrlContent ||
     extractedFromFiles ||
     (typeof attachment_extracted_text === "string" ? attachment_extracted_text : null) ||
-    content ||
-    null;
+    ((detected.type === "url" || detected.type === "video") ? null : (content || null));
   const parsed = await parseContent(
     parseContent_input,
     effectiveUrlTitle,
@@ -331,6 +331,9 @@ export async function POST(request: Request) {
     detectedForParsing,
     normalizedAttachments
   );
+  if ((detected.type === "url" || detected.type === "video") && !effectiveUrlContent) {
+    parsed.debug.notes.push("url_content_unavailable");
+  }
   if (
     detected.type === "image" &&
     uploadedFiles.some((f) => f.type.startsWith("image/")) &&

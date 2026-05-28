@@ -53,6 +53,9 @@ export function InboxPage() {
     setSelectedItem(item);
     setDrawerOpen(true);
     setStartQaForItemId(null);
+    if (internalizing === item.id) {
+      setStartInternalizeForItemId(item.id);
+    }
   }
 
   function openQaDrawer(item: CaptureItem) {
@@ -196,7 +199,14 @@ export function InboxPage() {
         startInternalizeForItemId={startInternalizeForItemId}
         onDraftStarted={() => {
           setStartInternalizeForItemId(null);
+        }}
+        onDraftFlowExit={() => {
           setInternalizing(null);
+          setStartInternalizeForItemId(null);
+        }}
+        onInternalizeSaved={() => {
+          setInternalizing(null);
+          setStartInternalizeForItemId(null);
         }}
         onDraftStartFailed={(message) => {
           setStartInternalizeForItemId(null);
