@@ -31,22 +31,145 @@ type UploadedAttachmentMeta = {
   storage_path: string | null;
 };
 
-async function refetchUrlContent(origin: string, url: string): Promise<{ title: string | null; content: string | null }> {
+type SourceDraft = {
+  source_type: "user_input" | "url_body" | "attachment_text" | "image_ocr" | "supplemental_text" | "user_understanding" | "raw_content_fallback";
+  content: string;
+  is_primary?: boolean;
+  source_label?: string | null;
+  source_ref?: string | null;
+  source_url?: string | null;
+  parse_status?: string;
+  metadata?: Record<string, unknown>;
+};
+
+type ExtractedFileSource = {
+  source_type: "attachment_text" | "image_ocr";
+  source_label: string;
+  source_ref?: string | null;
+  content: string;
+  parse_status?: string;
+  metadata?: Record<string, unknown>;
+};
+
+type UrlFetchResult = {
+  title: string | null;
+  content: string | null;
+  imageUrls: string[];
+  imageCount: number;
+  platform: "xiaohongshu" | "wechat" | "generic";
+};
+
+const XIAOHONGSHU_INLINE_OCR_LIMIT = 5;
+
+function formatSupabaseError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const maybeMessage = "message" in error ? (error as { message?: unknown }).message : undefined;
+    const maybeCode = "code" in error ? (error as { code?: unknown }).code : undefined;
+    const maybeDetails = "details" in error ? (error as { details?: unknown }).details : undefined;
+    return JSON.stringify({
+      message: typeof maybeMessage === "string" ? maybeMessage : undefined,
+      code: typeof maybeCode === "string" ? maybeCode : undefined,
+      details: typeof maybeDetails === "string" ? maybeDetails : undefined,
+    });
+  }
+  return String(error);
+}
+
+function isOptionalSourcesInfraError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("capture_item_sources") &&
+    (
+      m.includes("does not exist") ||
+      m.includes("schema cache") ||
+      m.includes("relationship") ||
+      m.includes("could not find a relationship")
+    )
+  );
+}
+
+async function refetchUrlContent(origin: string, url: string): Promise<UrlFetchResult> {
   try {
     const res = await fetch(`${origin}/api/parse-url`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
     });
-    if (!res.ok) return { title: null, content: null };
+    if (!res.ok) return { title: null, content: null, imageUrls: [], imageCount: 0, platform: "generic" };
     const data = await res.json();
     return {
       title: typeof data.title === "string" ? data.title : null,
       content: typeof data.content === "string" ? data.content : null,
+      imageUrls: Array.isArray(data.image_urls) ? data.image_urls.filter((x: unknown) => typeof x === "string") : [],
+      imageCount: typeof data.image_count === "number" ? data.image_count : 0,
+      platform: data.platform === "xiaohongshu" || data.platform === "wechat" ? data.platform : "generic",
     };
   } catch {
-    return { title: null, content: null };
+    return { title: null, content: null, imageUrls: [], imageCount: 0, platform: "generic" };
   }
+}
+
+async function fetchRemoteImageAsDataUrl(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Referer: "https://www.xiaohongshu.com/",
+      },
+    });
+    if (!res.ok) return null;
+    const mime = res.headers.get("content-type") || "image/jpeg";
+    const bytes = Buffer.from(await res.arrayBuffer());
+    return `data:${mime};base64,${bytes.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+async function extractRemoteImageSourcesForCapture(input: {
+  imageUrls: string[];
+  platform: "xiaohongshu" | "wechat" | "generic";
+  notes: string[];
+}): Promise<ExtractedFileSource[]> {
+  const { imageUrls, platform, notes } = input;
+  if (platform !== "xiaohongshu" || imageUrls.length === 0) return [];
+  if (imageUrls.length > XIAOHONGSHU_INLINE_OCR_LIMIT) {
+    notes.push(`xhs_image_ocr_deferred:image_count=${imageUrls.length}:limit=${XIAOHONGSHU_INLINE_OCR_LIMIT}`);
+    return [];
+  }
+
+  const sources: ExtractedFileSource[] = [];
+  for (let i = 0; i < imageUrls.length; i += 1) {
+    const url = imageUrls[i];
+    try {
+      const dataUrl = await fetchRemoteImageAsDataUrl(url);
+      if (!dataUrl) {
+        notes.push(`xhs_image_fetch_failed:${i + 1}`);
+        continue;
+      }
+      const text = await extractTextFromImageDataUrl(dataUrl);
+      if (!text?.trim()) {
+        notes.push(`xhs_image_ocr_empty:${i + 1}`);
+        continue;
+      }
+      sources.push({
+        source_type: "image_ocr",
+        source_label: `xhs_image_${i + 1}`,
+        source_ref: `remote_url:${url}`,
+        content: text.trim().slice(0, 4000),
+        metadata: { origin: "remote_url", remote_url: url, image_index: i + 1, platform },
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "unknown";
+      notes.push(`xhs_image_ocr_failed:${i + 1}:${msg.slice(0, 80)}`);
+    }
+  }
+  if (sources.length > 0) {
+    notes.push(`xhs_image_ocr_succeeded:${sources.length}`);
+  }
+  return sources;
 }
 
 async function insertCaptureItemCompat(
@@ -131,6 +254,165 @@ async function uploadFilesToStorage(
   return { metas, notes };
 }
 
+async function persistCaptureItemSources(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  captureItemId: string,
+  drafts: SourceDraft[]
+) {
+  const rows = drafts
+    .map((draft) => ({
+      capture_item_id: captureItemId,
+      user_id: userId,
+      source_type: draft.source_type,
+      source_label: draft.source_label || null,
+      source_ref: draft.source_ref || null,
+      source_url: draft.source_url || null,
+      content: draft.content.trim(),
+      is_primary: Boolean(draft.is_primary),
+      parse_status: draft.parse_status || "success",
+      metadata: draft.metadata || {},
+    }))
+    .filter((row) => row.content.length > 0);
+
+  if (!rows.length) return { inserted: 0, skipped: true as const };
+  const result = await supabase.from("capture_item_sources").insert(rows);
+  if (result.error && isOptionalSourcesInfraError(String(result.error.message || ""))) {
+    return { inserted: 0, skipped: true as const };
+  }
+  if (result.error) throw result.error;
+  return { inserted: rows.length, skipped: false as const };
+}
+
+async function selectCaptureItemsWithOptionalSources(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  input: {
+    userId: string;
+    captureItemId?: string;
+    status?: string | null;
+    search?: string | null;
+    single?: boolean;
+  }
+) {
+  let query = supabase
+    .from("capture_items")
+    .select("*, attachments(*), sources:capture_item_sources(*)")
+    .eq("user_id", input.userId)
+    .order("created_at", { ascending: false });
+
+  if (input.captureItemId) query = query.eq("id", input.captureItemId);
+  if (input.status && input.status !== "all") query = query.eq("status", input.status);
+  if (input.search) {
+    query = query.or(`title.ilike.%${input.search}%,source.ilike.%${input.search}%`);
+  }
+
+  const result = input.single ? await query.single() : await query;
+  if (!result.error || !isOptionalSourcesInfraError(String(result.error.message || ""))) {
+    return result;
+  }
+
+  let fallback = supabase
+    .from("capture_items")
+    .select("*, attachments(*)")
+    .eq("user_id", input.userId)
+    .order("created_at", { ascending: false });
+
+  if (input.captureItemId) fallback = fallback.eq("id", input.captureItemId);
+  if (input.status && input.status !== "all") fallback = fallback.eq("status", input.status);
+  if (input.search) {
+    fallback = fallback.or(`title.ilike.%${input.search}%,source.ilike.%${input.search}%`);
+  }
+
+  const fallbackResult = input.single ? await fallback.single() : await fallback;
+  if (fallbackResult.error) return fallbackResult;
+
+  if (Array.isArray(fallbackResult.data)) {
+    return {
+      ...fallbackResult,
+      data: fallbackResult.data.map((item) => ({ ...item, sources: [] })),
+    };
+  }
+
+  return {
+    ...fallbackResult,
+    data: fallbackResult.data ? { ...fallbackResult.data, sources: [] } : fallbackResult.data,
+  };
+}
+
+function buildCaptureSourceDrafts(input: {
+  content: string | undefined;
+  myUnderstanding: string | undefined;
+  effectiveUrlContent: string | null;
+  detectedSourceUrl: string | null;
+  extractedFileSources: ExtractedFileSource[];
+  persistedRawContent: string | null;
+  parseInputSource: string;
+}) {
+  const drafts: SourceDraft[] = [];
+  const trimmedContent = input.content?.trim() || "";
+  const trimmedUnderstanding = input.myUnderstanding?.trim() || "";
+  const trimmedUrl = input.effectiveUrlContent?.trim() || "";
+
+  if (trimmedContent && input.parseInputSource === "content") {
+    drafts.push({
+      source_type: "user_input",
+      content: trimmedContent,
+      is_primary: true,
+      parse_status: "success",
+    });
+  } else if (trimmedContent) {
+    drafts.push({
+      source_type: "user_input",
+      content: trimmedContent,
+      is_primary: false,
+      parse_status: "success",
+    });
+  }
+
+  if (trimmedUrl) {
+    drafts.push({
+      source_type: "url_body",
+      content: trimmedUrl,
+      is_primary: input.parseInputSource === "url_content",
+      source_url: input.detectedSourceUrl,
+      parse_status: "success",
+    });
+  }
+
+  for (const src of input.extractedFileSources) {
+    drafts.push({
+      source_type: src.source_type,
+      content: src.content,
+      is_primary: input.parseInputSource === "file_extracted_text" && drafts.every((x) => !x.is_primary),
+      source_label: src.source_label,
+      source_ref: src.source_ref || null,
+      parse_status: src.parse_status || "success",
+      metadata: src.metadata,
+    });
+  }
+
+  if (trimmedUnderstanding) {
+    drafts.push({
+      source_type: "user_understanding",
+      content: trimmedUnderstanding,
+      is_primary: false,
+      parse_status: "success",
+    });
+  }
+
+  if (!drafts.some((x) => x.content.trim() === (input.persistedRawContent || "").trim()) && input.persistedRawContent?.trim()) {
+    drafts.push({
+      source_type: "raw_content_fallback",
+      content: input.persistedRawContent.trim(),
+      is_primary: !drafts.some((x) => x.is_primary),
+      parse_status: "success",
+      metadata: { reason: "raw_content_fallback" },
+    });
+  }
+
+  return drafts;
+}
+
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const {
@@ -166,23 +448,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(counts);
   }
 
-  let query = supabase
-    .from("capture_items")
-    .select("*, attachments(*)")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false });
-
-  if (status && status !== "all") {
-    query = query.eq("status", status);
-  }
-
-  if (search) {
-    query = query.or(
-      `title.ilike.%${search}%,source.ilike.%${search}%`
-    );
-  }
-
-  const { data, error } = await query;
+  const { data, error } = await selectCaptureItemsWithOptionalSources(supabase, {
+    userId: user.id,
+    status,
+    search,
+  });
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -253,11 +523,23 @@ export async function POST(request: Request) {
   let effectiveUrlTitle = url_title || null;
   let effectiveUrlContent = url_content || null;
   let urlFetchSucceeded = Boolean(effectiveUrlContent);
+  let fetchedUrlImageUrls: string[] = [];
+  let fetchedUrlImageCount = 0;
+  let fetchedUrlPlatform: "xiaohongshu" | "wechat" | "generic" = "generic";
   if ((detected.type === "url" || detected.type === "video") && detected.source_url && !effectiveUrlContent) {
     const refetched = await refetchUrlContent(origin, detected.source_url);
     effectiveUrlTitle = effectiveUrlTitle || refetched.title;
     effectiveUrlContent = refetched.content;
     urlFetchSucceeded = Boolean(refetched.content);
+    fetchedUrlImageUrls = refetched.imageUrls;
+    fetchedUrlImageCount = refetched.imageCount;
+    fetchedUrlPlatform = refetched.platform;
+  }
+  if ((detected.type === "url" || detected.type === "video") && detected.source_url && effectiveUrlContent && fetchedUrlImageUrls.length === 0) {
+    const refetched = await refetchUrlContent(origin, detected.source_url);
+    fetchedUrlImageUrls = refetched.imageUrls;
+    fetchedUrlImageCount = refetched.imageCount;
+    fetchedUrlPlatform = refetched.platform;
   }
 
   // 2. Light parse: generate title, source, summary, tags
@@ -268,6 +550,7 @@ export async function POST(request: Request) {
   const extraction = oversizedDocAtCapture
     ? {
         text: null,
+        sources: [] as ExtractedFileSource[],
         notes: [
           "extractor_version:pdfjs_v7_ocr_fallback",
           ...uploadedFiles
@@ -280,6 +563,14 @@ export async function POST(request: Request) {
         ],
       }
     : await extractReadableTextFromFiles(uploadedFiles, detected);
+  const remoteImageSources = await extractRemoteImageSourcesForCapture({
+    imageUrls: fetchedUrlImageUrls,
+    platform: fetchedUrlPlatform,
+    notes: extraction.notes,
+  });
+  if (remoteImageSources.length > 0) {
+    extraction.sources.push(...remoteImageSources);
+  }
   const extractedFromFiles = extraction.text;
 
   // Hard rule (requested): if PDF file is within read threshold, extraction must succeed.
@@ -314,13 +605,20 @@ export async function POST(request: Request) {
       : ((detected.type === "url" || detected.type === "video") && !effectiveUrlContent)
         ? { ...detected, readable: false as const }
       : detected;
+  const urlImageOcrText = remoteImageSources.map((x) => x.content.trim()).filter(Boolean).join("\n\n").trim();
   const parseInputSource =
+    effectiveUrlContent && remoteImageSources.length > 0 ? "url_content_with_image_ocr" :
     effectiveUrlContent ? "url_content" :
+    remoteImageSources.length > 0 ? "url_image_ocr_only" :
     extractedFromFiles ? "file_extracted_text" :
     (typeof attachment_extracted_text === "string" && attachment_extracted_text.trim()) ? "attachment_extracted_text" :
     ((detected.type === "url" || detected.type === "video") ? "none" : ((typeof content === "string" && content.trim()) ? "content" : "none"));
+  const parseCombinedUrlContent = [effectiveUrlContent || "", urlImageOcrText]
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
   const parseContent_input =
-    effectiveUrlContent ||
+    parseCombinedUrlContent ||
     extractedFromFiles ||
     (typeof attachment_extracted_text === "string" ? attachment_extracted_text : null) ||
     ((detected.type === "url" || detected.type === "video") ? null : (content || null));
@@ -391,8 +689,10 @@ export async function POST(request: Request) {
     parsed.debug.notes.push("document_parse_deferred_due_to_capture_size_limit");
   }
   const persistedRawContent =
-    extractedFromFiles ||
-    effectiveUrlContent ||
+    [effectiveUrlContent || "", urlImageOcrText, extractedFromFiles || ""]
+      .filter(Boolean)
+      .join("\n\n")
+      .trim() ||
     (typeof content === "string" && content.trim()) ||
     (typeof attachment_extracted_text === "string" ? attachment_extracted_text : null) ||
     null;
@@ -406,6 +706,13 @@ export async function POST(request: Request) {
     model_tags_attempted: parsed.debug.model_tags_attempted,
     model_tags_succeeded: parsed.debug.model_tags_succeeded,
     url_fetch_succeeded: detected.type === "url" || detected.type === "video" ? urlFetchSucceeded : undefined,
+    url_platform: detected.type === "url" || detected.type === "video" ? fetchedUrlPlatform : undefined,
+    url_image_count: detected.type === "url" || detected.type === "video" ? fetchedUrlImageCount : undefined,
+    image_ocr_deferred:
+      fetchedUrlPlatform === "xiaohongshu" && fetchedUrlImageCount > XIAOHONGSHU_INLINE_OCR_LIMIT ? true : undefined,
+    deferred_image_urls:
+      fetchedUrlPlatform === "xiaohongshu" && fetchedUrlImageCount > XIAOHONGSHU_INLINE_OCR_LIMIT ? fetchedUrlImageUrls : undefined,
+    inline_image_ocr_count: remoteImageSources.length || undefined,
     file_extract_succeeded: uploadedFiles.length > 0 ? Boolean(extractedFromFiles) : undefined,
     file_extract_count: uploadedFiles.length || undefined,
     stages: {
@@ -444,6 +751,29 @@ export async function POST(request: Request) {
       ...(parseRequiredFailedDetail ? [`parse_required_failed:${parseRequiredFailedDetail}`] : []),
     ],
   };
+
+  const captureSourceDrafts = buildCaptureSourceDrafts({
+    content: typeof content === "string" ? content : undefined,
+    myUnderstanding: typeof my_understanding === "string" ? my_understanding : undefined,
+    effectiveUrlContent,
+    detectedSourceUrl: detected.source_url || null,
+    extractedFileSources: extraction.sources,
+    persistedRawContent,
+    parseInputSource,
+  });
+  if (fetchedUrlPlatform === "xiaohongshu" && fetchedUrlImageCount > XIAOHONGSHU_INLINE_OCR_LIMIT) {
+    captureSourceDrafts.push({
+      source_type: "supplemental_text",
+      content: `小红书图文共 ${fetchedUrlImageCount} 张图片，录入阶段已延后全量 OCR，等待内化阶段补全。`,
+      is_primary: false,
+      parse_status: "deferred",
+      metadata: {
+        platform: fetchedUrlPlatform,
+        image_count: fetchedUrlImageCount,
+        image_ocr_deferred: true,
+      },
+    });
+  }
 
   console.info("[capture-items.parse-result]", {
     user_id: user.id,
@@ -528,6 +858,16 @@ export async function POST(request: Request) {
     }
   }
 
+  try {
+    await persistCaptureItemSources(supabase, user.id, createdItem.id, captureSourceDrafts);
+  } catch (sourcePersistErr) {
+    console.warn("[capture-items.sources-persist-failed]", {
+      user_id: user.id,
+      capture_item_id: createdItem.id,
+      error: formatSupabaseError(sourcePersistErr),
+    });
+  }
+
   if (
     detected.type === "document" &&
     (!parsed.summary || !parsed.summary.trim()) &&
@@ -537,12 +877,11 @@ export async function POST(request: Request) {
     parsed.debug.notes.push("pdf_scanned_summary_fallback");
   }
 
-  const { data: fullItem, error: reloadError } = await supabase
-    .from("capture_items")
-    .select("*, attachments(*)")
-    .eq("id", createdItem.id)
-    .eq("user_id", user.id)
-    .single();
+  const { data: fullItem, error: reloadError } = await selectCaptureItemsWithOptionalSources(supabase, {
+    userId: user.id,
+    captureItemId: createdItem.id,
+    single: true,
+  });
 
   if (reloadError) {
     console.error("[capture-items.reload-failed]", {
@@ -623,11 +962,12 @@ function maybeTriggerParseRetry(input: {
 async function extractReadableTextFromFiles(
   files: File[],
   detected: ReturnType<typeof detectType>
-): Promise<{ text: string | null; notes: string[] }> {
+): Promise<{ text: string | null; sources: ExtractedFileSource[]; notes: string[] }> {
   const notes: string[] = ["extractor_version:pdfjs_v7_ocr_fallback"];
-  if (!files.length) return { text: null, notes: ["no_uploaded_files"] };
+  const sources: ExtractedFileSource[] = [];
+  if (!files.length) return { text: null, sources, notes: ["no_uploaded_files"] };
   if (!(detected.readable === true || detected.readable === "partial")) {
-    return { text: null, notes: ["type_not_readable_in_capture"] };
+    return { text: null, sources, notes: ["type_not_readable_in_capture"] };
   }
 
   const chunks: string[] = [];
@@ -647,7 +987,15 @@ async function extractReadableTextFromFiles(
         const dataUrl = await fileToDataUrl(file);
         const text = await extractTextFromImageDataUrl(dataUrl);
         if (text) {
-          chunks.push(text.slice(0, 2000));
+          const trimmed = text.slice(0, 2000);
+          chunks.push(trimmed);
+          sources.push({
+            source_type: "image_ocr",
+            source_label: file.name,
+            source_ref: file.name,
+            content: trimmed,
+            metadata: { file_type: file.type || "image/*" },
+          });
           imageOcrSucceeded += 1;
         } else {
           notes.push(`ocr_empty:${file.name}`);
@@ -665,7 +1013,15 @@ async function extractReadableTextFromFiles(
         if (file.name.toLowerCase().endsWith(".pdf")) {
           const external = await parsePdfWithService(file);
           if (external.ok && external.text) {
-            chunks.push(external.text.slice(0, 6000));
+            const trimmed = external.text.slice(0, 6000);
+            chunks.push(trimmed);
+            sources.push({
+              source_type: "attachment_text",
+              source_label: file.name,
+              source_ref: file.name,
+              content: trimmed,
+              metadata: { strategy: "pdf_parser_service", file_type: file.type || "application/pdf" },
+            });
             docExtractSucceeded += 1;
             notes.push(`pdf_parser_service_ok:${file.name}:chars=${external.text.length}`);
             continue;
@@ -698,13 +1054,29 @@ async function extractReadableTextFromFiles(
             notes.push(`pdf_heuristic_untrusted:${file.name}`);
             const ocrText = await tryPdfOcrFallback(file, notes);
             if (ocrText && evaluateExtractedTextQuality(ocrText).ok) {
-              chunks.push(ocrText.slice(0, 6000));
+              const trimmed = ocrText.slice(0, 6000);
+              chunks.push(trimmed);
+              sources.push({
+                source_type: "attachment_text",
+                source_label: file.name,
+                source_ref: file.name,
+                content: trimmed,
+                metadata: { strategy: "pdf_ocr_fallback_preferred", file_type: file.type || "application/pdf" },
+              });
               docExtractSucceeded += 1;
               notes.push(`pdf_ocr_fallback_preferred_over_heuristic:${file.name}`);
               continue;
             }
             if (hasPdfInfraFailure) {
-              chunks.push(text.slice(0, 6000));
+              const trimmed = text.slice(0, 6000);
+              chunks.push(trimmed);
+              sources.push({
+                source_type: "attachment_text",
+                source_label: file.name,
+                source_ref: file.name,
+                content: trimmed,
+                metadata: { strategy: "pdf_heuristic_low_confidence", file_type: file.type || "application/pdf" },
+              });
               docExtractSucceeded += 1;
               notes.push(`pdf_heuristic_low_confidence_accepted:${file.name}`);
               continue;
@@ -718,7 +1090,15 @@ async function extractReadableTextFromFiles(
             if (file.name.toLowerCase().endsWith(".pdf")) {
               const ocrText = await tryPdfOcrFallback(file, notes);
               if (ocrText && evaluateExtractedTextQuality(ocrText).ok) {
-                chunks.push(ocrText.slice(0, 6000));
+                const trimmed = ocrText.slice(0, 6000);
+                chunks.push(trimmed);
+                sources.push({
+                  source_type: "attachment_text",
+                  source_label: file.name,
+                  source_ref: file.name,
+                  content: trimmed,
+                  metadata: { strategy: "pdf_ocr_fallback", file_type: file.type || "application/pdf" },
+                });
                 docExtractSucceeded += 1;
                 notes.push(`pdf_ocr_fallback_used:${file.name}`);
                 continue;
@@ -727,13 +1107,29 @@ async function extractReadableTextFromFiles(
             }
             continue;
           }
-          chunks.push(text.slice(0, 6000));
+          const trimmed = text.slice(0, 6000);
+          chunks.push(trimmed);
+          sources.push({
+            source_type: "attachment_text",
+            source_label: file.name,
+            source_ref: file.name,
+            content: trimmed,
+            metadata: { strategy: extracted.meta.strategy || "document_extract", file_type: file.type || "application/octet-stream" },
+          });
           docExtractSucceeded += 1;
         } else {
           if (file.name.toLowerCase().endsWith(".pdf")) {
             const ocrText = await tryPdfOcrFallback(file, notes);
             if (ocrText && evaluateExtractedTextQuality(ocrText).ok) {
-              chunks.push(ocrText.slice(0, 6000));
+              const trimmed = ocrText.slice(0, 6000);
+              chunks.push(trimmed);
+              sources.push({
+                source_type: "attachment_text",
+                source_label: file.name,
+                source_ref: file.name,
+                content: trimmed,
+                metadata: { strategy: "pdf_ocr_fallback", file_type: file.type || "application/pdf" },
+              });
               docExtractSucceeded += 1;
               notes.push(`pdf_ocr_fallback_used:${file.name}`);
               continue;
@@ -759,7 +1155,7 @@ async function extractReadableTextFromFiles(
   if (docExtractAttempted > 0) notes.push(`doc_extract_attempted:${docExtractAttempted}`);
   if (docExtractSucceeded > 0) notes.push(`doc_extract_succeeded:${docExtractSucceeded}`);
   if (!merged) notes.push("file_extract_no_text");
-  return { text: merged || null, notes };
+  return { text: merged || null, sources, notes };
 }
 
 async function parsePdfWithService(file: File): Promise<{ ok: boolean; text?: string; errorCode?: string; detail?: string }> {

@@ -1,7 +1,7 @@
 ﻿import { randomUUID } from "crypto";
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
-import { generateCompletion, generateEmbedding } from "@/lib/llm/client";
+import { extractTextFromImageDataUrl, generateCompletion, generateEmbedding } from "@/lib/llm/client";
 import { ERROR_CODES, errorBody } from "@/lib/api/error-codes";
 import { withRetry } from "@/lib/llm/resilience";
 import { extractDocumentTextDetailed } from "@/lib/parse/document-extractor";
@@ -11,11 +11,24 @@ import {
   CONCEPT_EXTRACTION,
 } from "@/lib/llm/prompts";
 
+type CaptureSourceRow = {
+  id: string;
+  source_type: string;
+  source_label: string | null;
+  source_ref: string | null;
+  source_url: string | null;
+  content: string;
+  is_primary: boolean;
+  parse_status: string;
+  metadata?: Record<string, unknown> | null;
+};
+
 const DEFERRED_SUMMARY_MARKERS = [
   "文件超过录入解析阈值，已先完成收录。请在内化阶段继续解析。",
   "Document is large. Summary will be available after processing.",
 ];
 const MIN_INTERNALIZE_SOURCE_CHARS = 120;
+const XIAOHONGSHU_INLINE_OCR_LIMIT = 5;
 
 function isDeferredSummary(summary: string | null | undefined): boolean {
   const s = (summary || "").trim();
@@ -136,20 +149,29 @@ export async function POST(request: Request) {
             .map((a) => `${a.file_name}${a.file_type ? ` (${a.file_type})` : ""}`)
             .join("\n")
         : "";
+    if (shouldRunDeferredRemoteImageOcr(parseDebug)) {
+      stage = "deferred_remote_image_ocr";
+      await materializeDeferredRemoteImageOcrSources(supabase, user.id, item.id, parseDebug);
+    }
+    const sourceRows = await loadCaptureSourceRows(supabase, user.id, item.id);
+    const sourceContext = buildSourceContext(sourceRows);
     const attachmentParseDiag: string[] = [];
-    const attachmentExtractedText = await extractAttachmentTextForInternalize(
-      supabase,
-      user.id,
-      (attachments || []) as Array<{
-        file_name: string;
-        file_type?: string | null;
-        file_size?: number | null;
-        storage_path?: string | null;
-      }>,
-      attachmentParseDiag
-    );
+    let attachmentExtractedText = "";
+    if (!sourceContext.hasEnoughPrimaryText) {
+      attachmentExtractedText = await extractAttachmentTextForInternalize(
+        supabase,
+        user.id,
+        (attachments || []) as Array<{
+          file_name: string;
+          file_type?: string | null;
+          file_size?: number | null;
+          storage_path?: string | null;
+        }>,
+        attachmentParseDiag
+      );
+    }
 
-    const primarySourceText = [item.raw_content?.trim() || "", attachmentExtractedText]
+    const primarySourceText = sourceContext.primaryText || [item.raw_content?.trim() || "", attachmentExtractedText]
       .filter(Boolean)
       .join("\n\n")
       .trim();
@@ -179,8 +201,9 @@ export async function POST(request: Request) {
     }
     const sourceContent = [
       primarySourceText,
+      sourceContext.supplementalText,
       isDeferredSummary(item.summary) ? "" : (item.summary?.trim() || ""),
-      item.my_understanding?.trim() || "",
+      sourceContext.userUnderstanding || item.my_understanding?.trim() || "",
       attachmentContext ? `附件列表:\n${attachmentContext}` : "",
     ]
       .filter(Boolean)
@@ -376,6 +399,11 @@ export async function POST(request: Request) {
       }
     }
 
+    stage = "embed_source_chunks";
+    if (sourceRows.length > 0) {
+      await rebuildSourceChunksBestEffort(supabase, user.id, item.id, sourceRows);
+    }
+
     const relations: unknown[] = [];
     stage = "build_relations";
     try {
@@ -483,6 +511,237 @@ export async function POST(request: Request) {
       errorBody(ERROR_CODES.internalize_failed, `${stage}: ${message}`, traceId, { status: "error" }),
       { status: 500 }
     );
+  }
+}
+
+async function loadCaptureSourceRows(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  captureItemId: string
+): Promise<CaptureSourceRow[]> {
+  const isOptionalSourceInfraError = (message: string) => {
+    const m = message.toLowerCase();
+    return (
+      (m.includes("capture_item_sources") || m.includes("source_chunks")) &&
+      (
+        m.includes("does not exist") ||
+        m.includes("schema cache") ||
+        m.includes("relationship") ||
+        m.includes("could not find a relationship")
+      )
+    );
+  };
+
+  const result = await supabase
+    .from("capture_item_sources")
+    .select("id, source_type, source_label, source_ref, source_url, content, is_primary, parse_status, metadata")
+    .eq("user_id", userId)
+    .eq("capture_item_id", captureItemId)
+    .order("created_at", { ascending: true });
+
+  if (result.error && isOptionalSourceInfraError(String(result.error.message || ""))) {
+    return [];
+  }
+  if (result.error) {
+    throw result.error;
+  }
+  return (result.data || []) as CaptureSourceRow[];
+}
+
+function buildSourceContext(rows: CaptureSourceRow[]) {
+  const objectiveRows = rows.filter((row) => row.source_type !== "user_understanding" && row.content?.trim());
+  const primaryRows = objectiveRows.filter((row) => row.is_primary);
+  const effectivePrimary = primaryRows.length > 0 ? primaryRows : objectiveRows.slice(0, 1);
+  const supplementalRows = objectiveRows.filter((row) => !effectivePrimary.some((primary) => primary.id === row.id));
+  const userUnderstanding = rows
+    .filter((row) => row.source_type === "user_understanding")
+    .map((row) => row.content.trim())
+    .filter(Boolean)
+    .join("\n\n");
+
+  const primaryText = effectivePrimary.map((row) => row.content.trim()).filter(Boolean).join("\n\n").trim();
+  const supplementalText = supplementalRows
+    .map((row) => {
+      const label = row.source_label || row.source_type;
+      return `来源补充（${label}）:\n${row.content.trim()}`;
+    })
+    .join("\n\n")
+    .trim();
+
+  return {
+    primaryText,
+    supplementalText,
+    userUnderstanding,
+    hasEnoughPrimaryText: normalizedLength(primaryText) >= MIN_INTERNALIZE_SOURCE_CHARS,
+  };
+}
+
+async function rebuildSourceChunksBestEffort(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  captureItemId: string,
+  sourceRows: CaptureSourceRow[]
+) {
+  try {
+    const deleteResult = await supabase.from("source_chunks").delete().eq("user_id", userId).eq("capture_item_id", captureItemId);
+    if (deleteResult.error) {
+      const msg = String(deleteResult.error.message || "").toLowerCase();
+      if (msg.includes("source_chunks") && (msg.includes("does not exist") || msg.includes("schema cache"))) {
+        return;
+      }
+      return;
+    }
+  } catch {
+    return;
+  }
+
+  for (const row of sourceRows) {
+    if (!row.content?.trim()) continue;
+    const chunks = chunkSourceText(row.content);
+    for (let i = 0; i < chunks.length; i += 1) {
+      try {
+        const embedding = await withRetry(() => generateEmbedding(chunks[i]), {
+          attempts: 2,
+          timeoutMs: 20000,
+        });
+        const insertResult = await supabase.from("source_chunks").insert({
+          user_id: userId,
+          capture_item_id: captureItemId,
+          capture_item_source_id: row.id,
+          chunk_index: i,
+          content: chunks[i],
+          embedding: embedding as unknown as string,
+          token_count: Math.ceil(chunks[i].length / 2),
+        });
+        if (insertResult.error) {
+          const msg = String(insertResult.error.message || "").toLowerCase();
+          if (msg.includes("source_chunks") && (msg.includes("does not exist") || msg.includes("schema cache"))) {
+            return;
+          }
+        }
+      } catch {
+        // best effort only
+      }
+    }
+  }
+}
+
+function chunkSourceText(text: string, maxChars = 900): string[] {
+  const paragraphs = text
+    .split(/\n\s*\n/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const chunks: string[] = [];
+  let current = "";
+  for (const paragraph of paragraphs) {
+    if (!current) {
+      current = paragraph;
+      continue;
+    }
+    if ((current + "\n\n" + paragraph).length > maxChars) {
+      chunks.push(current);
+      current = paragraph;
+    } else {
+      current = `${current}\n\n${paragraph}`;
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  if (!chunks.length && text.trim()) {
+    const trimmed = text.trim();
+    for (let i = 0; i < trimmed.length; i += maxChars) {
+      chunks.push(trimmed.slice(i, i + maxChars));
+    }
+  }
+  return chunks.filter((chunk) => chunk.length > 20).slice(0, 24);
+}
+
+function shouldRunDeferredRemoteImageOcr(parseDebug: Record<string, unknown>): boolean {
+  return (
+    parseDebug.url_platform === "xiaohongshu" &&
+    parseDebug.image_ocr_deferred === true &&
+    Array.isArray(parseDebug.deferred_image_urls) &&
+    parseDebug.deferred_image_urls.length > XIAOHONGSHU_INLINE_OCR_LIMIT
+  );
+}
+
+async function fetchRemoteImageAsDataUrl(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Referer: "https://www.xiaohongshu.com/",
+      },
+    });
+    if (!res.ok) return null;
+    const mime = res.headers.get("content-type") || "image/jpeg";
+    const bytes = Buffer.from(await res.arrayBuffer());
+    return `data:${mime};base64,${bytes.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+async function materializeDeferredRemoteImageOcrSources(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  captureItemId: string,
+  parseDebug: Record<string, unknown>
+) {
+  const imageUrls = Array.isArray(parseDebug.deferred_image_urls)
+    ? parseDebug.deferred_image_urls.filter((x): x is string => typeof x === "string")
+    : [];
+  if (imageUrls.length === 0) return;
+
+  try {
+    await supabase
+      .from("capture_item_sources")
+      .delete()
+      .eq("user_id", userId)
+      .eq("capture_item_id", captureItemId)
+      .eq("source_type", "image_ocr")
+      .like("source_ref", "remote_url:%");
+  } catch {
+    return;
+  }
+
+  const rows: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < imageUrls.length; i += 1) {
+    const remoteUrl = imageUrls[i];
+    try {
+      const dataUrl = await fetchRemoteImageAsDataUrl(remoteUrl);
+      if (!dataUrl) continue;
+      const text = await extractTextFromImageDataUrl(dataUrl);
+      if (!text?.trim()) continue;
+      rows.push({
+        capture_item_id: captureItemId,
+        user_id: userId,
+        source_type: "image_ocr",
+        source_label: `xhs_image_${i + 1}`,
+        source_ref: `remote_url:${remoteUrl}`,
+        source_url: remoteUrl,
+        content: text.trim().slice(0, 4000),
+        is_primary: false,
+        parse_status: "success",
+        metadata: {
+          origin: "remote_url",
+          remote_url: remoteUrl,
+          image_index: i + 1,
+          platform: "xiaohongshu",
+          deferred_from_capture: true,
+        },
+      });
+    } catch {
+      // best effort only
+    }
+  }
+
+  if (rows.length === 0) return;
+
+  try {
+    await supabase.from("capture_item_sources").insert(rows);
+  } catch {
+    // optional infra
   }
 }
 

@@ -1,6 +1,24 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 
+function normalizeUrl(raw: string, baseUrl: string): string | null {
+  try {
+    return new URL(raw, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function isLikelyContentImage(url: string): boolean {
+  const lower = url.toLowerCase();
+  if (!/^https?:\/\//i.test(lower)) return false;
+  if (lower.includes("/avatar")) return false;
+  if (lower.includes("favicon")) return false;
+  if (lower.includes("sprite")) return false;
+  if (lower.includes("icon")) return false;
+  return /\.(png|jpe?g|webp|gif)(\?|$)/i.test(lower) || /imageView2|xhsimg|xhscdn|sns-webpic/i.test(lower);
+}
+
 function extractText(html: string): string {
   // Remove script, style, nav, header, footer
   const cleaned = html
@@ -43,6 +61,39 @@ function extractDescription(html: string): string | null {
   return ogDescMatch?.[1]?.trim() || metaDescMatch?.[1]?.trim() || null;
 }
 
+function extractImageUrls(html: string, pageUrl: string): string[] {
+  const seen = new Set<string>();
+  const results: string[] = [];
+
+  const pushUrl = (candidate: string | null | undefined) => {
+    if (!candidate) return;
+    const normalized = normalizeUrl(candidate, pageUrl);
+    if (!normalized) return;
+    if (!isLikelyContentImage(normalized)) return;
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    results.push(normalized);
+  };
+
+  const imgTagRegex = /<img[^>]+src=["']([^"']+)["']/gi;
+  let match: RegExpExecArray | null;
+  while ((match = imgTagRegex.exec(html))) {
+    pushUrl(match[1]);
+  }
+
+  const ogImageRegex = /<meta\s+(?:property|name)=["'](?:og:image|twitter:image)["']\s+content=["']([^"']+)["']/gi;
+  while ((match = ogImageRegex.exec(html))) {
+    pushUrl(match[1]);
+  }
+
+  const jsonUrlRegex = /https?:\/\/[^"'\\\s]+(?:xhsimg\.com|xhscdn\.com|sns-webpic-qc\.xhscdn\.com|ci\.xiaohongshu\.com)[^"'\\\s]*/gi;
+  while ((match = jsonUrlRegex.exec(html))) {
+    pushUrl(match[0]);
+  }
+
+  return results.slice(0, 24);
+}
+
 async function fetchHtml(url: string, timeoutMs: number): Promise<string | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -76,6 +127,12 @@ async function fetchViaJina(url: string): Promise<{ title: string | null; conten
   return { title, content };
 }
 
+function detectUrlPlatform(url: string): "xiaohongshu" | "wechat" | "generic" {
+  if (/xiaohongshu\.com|xhslink\.com/i.test(url)) return "xiaohongshu";
+  if (/mp\.weixin\.qq\.com/i.test(url)) return "wechat";
+  return "generic";
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -96,11 +153,14 @@ export async function POST(request: Request) {
     let title: string | null = null;
     let description: string | null = null;
     let textContent: string | null = null;
+    let imageUrls: string[] = [];
+    const platform = detectUrlPlatform(url);
 
     if (html) {
       title = extractTitle(html);
       description = extractDescription(html);
       textContent = extractText(html);
+      imageUrls = extractImageUrls(html, url);
     }
 
     // WeChat and similar anti-crawl pages: use a reader fallback.
@@ -118,9 +178,12 @@ export async function POST(request: Request) {
       title: title || null,
       description: description || null,
       content: textContent || null,
+      image_urls: imageUrls,
+      image_count: imageUrls.length,
+      platform,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to fetch URL";
-    return NextResponse.json({ title: null, content: null, error: message });
+    return NextResponse.json({ title: null, content: null, image_urls: [], image_count: 0, platform: detectUrlPlatform(url), error: message });
   }
 }

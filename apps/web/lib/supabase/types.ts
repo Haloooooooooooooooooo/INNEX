@@ -26,6 +26,7 @@ export interface CaptureItem {
   created_at: string;
   updated_at: string;
   attachments?: Attachment[];
+  sources?: CaptureItemSource[];
 }
 
 export interface Attachment {
@@ -58,6 +59,41 @@ export interface ParseDebugInfo {
     tags?: { attempted: boolean; ok: boolean };
   };
   notes?: string[];
+}
+
+export type CaptureItemSourceType =
+  | "user_input"
+  | "url_body"
+  | "attachment_text"
+  | "image_ocr"
+  | "supplemental_text"
+  | "user_understanding"
+  | "raw_content_fallback";
+
+export interface CaptureItemSource {
+  id: string;
+  capture_item_id: string;
+  user_id: string;
+  source_type: CaptureItemSourceType;
+  source_label: string | null;
+  source_ref: string | null;
+  source_url: string | null;
+  content: string;
+  is_primary: boolean;
+  parse_status: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface SourceChunk {
+  id: string;
+  capture_item_source_id: string;
+  capture_item_id: string;
+  user_id: string;
+  chunk_index: number;
+  content: string;
+  token_count: number | null;
+  created_at: string;
 }
 
 // === Phase 2 types ===

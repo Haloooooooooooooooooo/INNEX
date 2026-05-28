@@ -1,6 +1,46 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 
+function isOptionalSourcesInfraError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("capture_item_sources") &&
+    (
+      m.includes("does not exist") ||
+      m.includes("schema cache") ||
+      m.includes("relationship") ||
+      m.includes("could not find a relationship")
+    )
+  );
+}
+
+async function loadCaptureItemWithOptionalSources(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  id: string
+) {
+  const result = await supabase
+    .from("capture_items")
+    .select("*, attachments(*), sources:capture_item_sources(*)")
+    .eq("id", id)
+    .eq("user_id", userId)
+    .single();
+
+  if (!result.error || !isOptionalSourcesInfraError(String(result.error.message || ""))) {
+    return result;
+  }
+
+  const fallback = await supabase
+    .from("capture_items")
+    .select("*, attachments(*)")
+    .eq("id", id)
+    .eq("user_id", userId)
+    .single();
+
+  if (fallback.error || !fallback.data) return fallback;
+  return { ...fallback, data: { ...fallback.data, sources: [] } };
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -15,12 +55,7 @@ export async function GET(
   }
 
   const { id } = await params;
-  const { data, error } = await supabase
-    .from("capture_items")
-    .select("*, attachments(*)")
-    .eq("id", id)
-    .eq("user_id", user.id)
-    .single();
+  const { data, error } = await loadCaptureItemWithOptionalSources(supabase, user.id, id);
 
   if (error || !data) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

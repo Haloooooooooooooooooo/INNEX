@@ -34,6 +34,34 @@ function sanitizeInputText(content: string): string {
     .trim();
 }
 
+function stripMarkdownArtifacts(content: string): string {
+  return content
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^>\s+/gm, "")
+    .replace(/^[-*+]\s+/gm, "")
+    .replace(/^\d+\.\d+(\.\d+)*\s+/gm, "")
+    .replace(/^\d+\.\s+/gm, "")
+    .replace(/`{1,3}([^`]*)`{1,3}/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/_{1,2}([^_]+)_{1,2}/g, "$1")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    .replace(/^-{3,}$/gm, " ")
+    .replace(/\|/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeSummaryText(content: string): string | null {
+  const plain = stripMarkdownArtifacts(content)
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .trim();
+  if (!plain) return null;
+
+  const compact = plain.slice(0, 140).trim();
+  return compact || null;
+}
+
 function normalizeTags(tags: string[]): string[] {
   const generic = new Set([
     "app",
@@ -45,13 +73,48 @@ function normalizeTags(tags: string[]): string[] {
     "platform",
     "framework",
     "knowledge",
+    "chapter",
+    "section",
+    "part",
+    "agent",
+    "system",
+    "document",
+    "markdown",
+    "note",
+    "content",
+    "summary",
+    "第一章",
+    "第二章",
+    "第三章",
+    "第四章",
+    "第五章",
+    "第六章",
+    "第七章",
+    "第八章",
+    "第九章",
+    "第十章",
+    "本章",
+    "章节",
+    "小节",
+    "部分",
+    "内容",
+    "文档",
+    "笔记",
+    "核心论点",
+    "要点",
+    "总结",
   ]);
   const seen = new Set<string>();
   const out: string[] = [];
   for (const t of tags) {
-    const v = (t || "").trim();
+    const v = stripMarkdownArtifacts((t || "").trim())
+      .replace(/^第[一二三四五六七八九十百千万\d]+章/, "")
+      .replace(/^第[一二三四五六七八九十百千万\d]+节/, "")
+      .trim();
     if (!v || v.length <= 1) continue;
     if (generic.has(v.toLowerCase()) || generic.has(v)) continue;
+    if (/^第[一二三四五六七八九十百千万\d]+[章节部分篇]$/.test(v)) continue;
+    if (/^(chapter|section|part)\s*\d+$/i.test(v)) continue;
     if (seen.has(v)) continue;
     seen.add(v);
     out.push(v);
@@ -124,14 +187,12 @@ async function llmTags(content: string): Promise<string[]> {
 
 async function llmSummaryWithError(content: string): Promise<{ value: string | null; error?: string }> {
   if (!content.trim()) return { value: null, error: "empty_input" };
-  const prompt = parseSummaryUserPrompt(content);
+  const prompt = parseSummaryUserPrompt(compressContentForSummary(content));
   return llmWithParseFallback("summary", prompt, PARSE_SUMMARY_PROMPT, {
     maxOutputTokens: 180,
-    postprocess: (value) => {
-      const normalized = (value || "").trim();
-      return normalized ? normalized : null;
-    },
+    postprocess: (value) => normalizeSummaryText(value || ""),
     emptyError: "summary_empty",
+    retry: { attempts: 3, timeoutMs: 25000, retryDelayMs: 700 },
   });
 }
 
@@ -225,6 +286,23 @@ function heuristicTagsFromText(content: string): string[] {
   );
 }
 
+function heuristicSummaryFromText(content: string): string | null {
+  const normalized = stripMarkdownArtifacts(content).replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+
+  const sentences = normalized
+    .split(/(?<=[。！？!?\.])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (sentences.length === 0) {
+    return normalizeSummaryText(normalized.slice(0, 120));
+  }
+
+  const summary = sentences.slice(0, 2).join(" ").trim();
+  return normalizeSummaryText(summary);
+}
+
 function normalizeModelError(message: string): string {
   const m = message.toLowerCase();
   if (m.includes("ssl") || m.includes("tls") || m.includes("handshake")) return "model_network_error";
@@ -294,6 +372,14 @@ function compressContentForTags(content: string): string {
   return `${head}\n...\n${middle}\n...\n${tail}`;
 }
 
+function compressContentForSummary(content: string): string {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 2600) return normalized;
+  const head = normalized.slice(0, 1500);
+  const tail = normalized.slice(-900);
+  return `${head}\n...\n${tail}`;
+}
+
 export async function parseContent(
   contentForParsing: string | null,
   urlTitle: string | null,
@@ -321,7 +407,14 @@ export async function parseContent(
     debug.model_summary_attempted = true;
     const summaryResult = await llmSummaryWithError(raw);
     summary = summaryResult.value;
-    debug.model_summary_succeeded = Boolean(summary?.trim());
+    debug.model_summary_succeeded = Boolean(summaryResult.value?.trim());
+    if (!summary) {
+      const fallbackSummary = heuristicSummaryFromText(raw);
+      if (fallbackSummary) {
+        summary = fallbackSummary;
+        debug.notes.push("summary_heuristic_fallback_used");
+      }
+    }
     if (!debug.model_summary_succeeded) {
       debug.notes.push("summary_model_failed_or_empty");
       if (summaryResult.error) debug.notes.push(`summary_error:${summaryResult.error}`);
