@@ -11,10 +11,11 @@ interface InboxTableProps {
   onSelect: (item: CaptureItem) => void;
   onAskFromItem: (item: CaptureItem) => void;
   onStatusChange: (id: string, status: CaptureItemStatus) => void;
-  onInternalize: (id: string) => void;
+  onInternalize: (id: string) => Promise<void>;
   onDelete: (id: string) => void;
   onDeleteMany: (ids: string[]) => void;
   onViewOriginal: (item: CaptureItem) => void;
+  internalizingId?: string | null;
 }
 
 const statusConfig: Record<CaptureItemStatus, { label: string; cls: string }> = {
@@ -58,7 +59,7 @@ function formatDate(iso: string) {
   return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
 }
 
-export function InboxTable({ items, loading, onSelect, onAskFromItem, onStatusChange, onInternalize, onDelete, onDeleteMany, onViewOriginal }: InboxTableProps) {
+export function InboxTable({ items, loading, onSelect, onAskFromItem, onStatusChange, onInternalize, onDelete, onDeleteMany, onViewOriginal, internalizingId = null }: InboxTableProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; ids: string[] } | null>(null);
@@ -84,10 +85,15 @@ export function InboxTable({ items, loading, onSelect, onAskFromItem, onStatusCh
       return;
     }
     if (action === "toPending" || action === "internalize") {
+      if (action === "internalize" && internalizingId) return;
       setActionLoadingId(`${item.id}:${action}`);
-      if (action === "toPending") onStatusChange(item.id, "pending");
-      if (action === "internalize") onInternalize(item.id);
-      setTimeout(() => setActionLoadingId(null), 1200);
+      if (action === "toPending") {
+        onStatusChange(item.id, "pending");
+      }
+      if (action === "internalize") {
+        await onInternalize(item.id);
+      }
+      setActionLoadingId(null);
       return;
     }
     if (action === "view") onViewOriginal(item);
@@ -183,9 +189,20 @@ export function InboxTable({ items, loading, onSelect, onAskFromItem, onStatusCh
                         <button
                           key={a.action}
                           onClick={() => void runAction(a.action, item)}
+                          disabled={
+                            a.action === "internalize"
+                              ? Boolean(internalizingId)
+                              : a.action === "delete"
+                                ? Boolean(internalizingId)
+                                : false
+                          }
                           className={`text-[10px] px-2.5 py-[3px] rounded-full border border-black/[0.14] bg-white/65 transition-colors whitespace-nowrap cursor-pointer ${a.cls}`}
                         >
-                          {actionLoadingId === `${item.id}:${a.action}` ? "处理中..." : a.label}
+                          {a.action === "internalize" && internalizingId === item.id
+                            ? "内化中..."
+                            : actionLoadingId === `${item.id}:${a.action}`
+                              ? "处理中..."
+                              : a.label}
                         </button>
                       ))}
                     </div>
@@ -200,6 +217,7 @@ export function InboxTable({ items, loading, onSelect, onAskFromItem, onStatusCh
         <div className="fixed z-[900] min-w-[120px] rounded-md border border-black/15 bg-white shadow-lg py-1" style={{ left: contextMenu.x, top: contextMenu.y }}>
           <button
             type="button"
+            disabled={Boolean(internalizingId)}
             className="w-full text-left px-3 py-1.5 text-[12px] text-red-600 hover:bg-red-50 cursor-pointer"
             onClick={() => {
               closeContextMenu();

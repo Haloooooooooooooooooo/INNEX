@@ -337,7 +337,8 @@ export async function parseContent(
   } else if (type === "video") {
     summary = "This link is a video. Summary will be available after processing.";
   } else if (type === "document") {
-    summary = "Document is large. Summary will be available after processing.";
+    summary = null;
+    debug.notes.push("document_summary_deferred");
   } else if (type === "image") {
     summary = "Image content needs processing before it can be summarized.";
   } else if (type === "attachment_group") {

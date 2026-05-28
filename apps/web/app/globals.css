@@ -198,4 +198,27 @@
   .hero-title-main span {
     color: var(--innex-accent);
   }
+
+  .draft-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #d8a488 transparent;
+  }
+
+  .draft-scrollbar::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  .draft-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+    margin-block: 10px;
+  }
+
+  .draft-scrollbar::-webkit-scrollbar-thumb {
+    background: #d8a488;
+    border-radius: 0;
+  }
+
+  .draft-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #c89274;
+  }
 }

@@ -19,12 +19,16 @@ interface InboxDrawerProps {
   item: CaptureItem | null;
   open: boolean;
   startQaForItemId?: string | null;
+  startInternalizeForItemId?: string | null;
   onClose: () => void;
   onUpdate: (id: string, updates: Partial<CaptureItem>) => Promise<{ success?: boolean; error?: string }>;
   onDelete: (id: string) => Promise<{ success?: boolean; error?: string }>;
   onInternalize: (id: string, options?: { includeVideo?: boolean }) => void;
   onViewOriginal: (item: CaptureItem) => void;
   internalizing: boolean;
+  isAnyInternalizing?: boolean;
+  onDraftStarted?: () => void;
+  onDraftStartFailed?: (message: string) => void;
 }
 
 function formatTime(iso: string) {
@@ -48,12 +52,16 @@ export function InboxDrawer({
   item,
   open,
   startQaForItemId,
+  startInternalizeForItemId,
   onClose,
   onUpdate,
   onDelete,
   onInternalize,
   onViewOriginal,
   internalizing,
+  isAnyInternalizing = false,
+  onDraftStarted,
+  onDraftStartFailed,
 }: InboxDrawerProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [understanding, setUnderstanding] = useState("");
@@ -63,7 +71,9 @@ export function InboxDrawer({
   const [draftMode, setDraftMode] = useState(false);
   const [qaMode, setQaMode] = useState(false);
   const [draftContent, setDraftContent] = useState("");
+  const [draftCache, setDraftCache] = useState<Record<string, string>>({});
   const [draftLoading, setDraftLoading] = useState(false);
+  const [finalizingInternalize, setFinalizingInternalize] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [draftIncludeVideo, setDraftIncludeVideo] = useState(false);
   const [aiNoteContent, setAiNoteContent] = useState<string | null>(null);
@@ -87,6 +97,7 @@ export function InboxDrawer({
       setDraftMode(false);
       setDraftIncludeVideo(false);
       setQaMode(false);
+      setFinalizingInternalize(false);
       setAiNoteContent(null);
       setAiNoteTitle(null);
       setAiNoteId(null);
@@ -106,6 +117,16 @@ export function InboxDrawer({
     setQaSessionId(null);
     setQaMode(true);
   }, [item, startQaForItemId]);
+
+  useEffect(() => {
+    if (!item || !startInternalizeForItemId) return;
+    if (startInternalizeForItemId !== item.id) return;
+    enterDraftMode({
+      onStarted: () => onDraftStarted?.(),
+      onFailed: (msg) => onDraftStartFailed?.(msg),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id, startInternalizeForItemId]);
 
   useEffect(() => {
     if (!item || item.status !== "crystallized") return;
@@ -183,7 +204,16 @@ export function InboxDrawer({
     onViewOriginal(item!);
   }
 
-  function enterDraftMode() {
+  function enterDraftMode(options?: { onStarted?: () => void; onFailed?: (message: string) => void }) {
+    // Reuse existing draft when user returns to detail then re-enters internalize.
+    const cached = item?.id ? (draftCache[item.id] || "") : "";
+    if (cached.trim()) {
+      setDraftContent(cached);
+      setDraftMode(true);
+      options?.onStarted?.();
+      return;
+    }
+
     const includeVideo =
       item?.type === "video"
         ? window.confirm("检测到视频链接。将先按文字内容内化，是否同时解析视频补充内容？")
@@ -207,11 +237,14 @@ export function InboxDrawer({
         }
         const content = typeof data?.draft?.content === "string" ? data.draft.content : "";
         setDraftContent(content);
+        setDraftCache((prev) => ({ ...prev, [item!.id]: content }));
+        options?.onStarted?.();
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "草稿生成失败";
         setDraftError(`草稿生成失败：${msg}`);
-        setDraftContent(buildFallbackDraft(item!));
+        setDraftContent("");
+        options?.onFailed?.(msg);
       })
       .finally(() => setDraftLoading(false));
   }
@@ -236,31 +269,67 @@ export function InboxDrawer({
   }
 
   async function saveDraft() {
+    if (!draftContent.trim()) {
+      setDraftError("草稿为空，无法保存。");
+      return;
+    }
     setDraftLoading(true);
     setDraftError(null);
-    try {
-      const res = await fetch("/api/internalize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          captureItemId: item!.id,
-          dryRun: false,
-          overrideMarkdown: draftContent,
-          includeVideo: draftIncludeVideo,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(typeof data?.error === "string" ? data.error : "保存内化失败");
+    setFinalizingInternalize(true);
+
+    const itemId = item!.id;
+    const content = draftContent;
+    const includeVideo = draftIncludeVideo;
+
+    // Fast UI response: close draft immediately and finish the heavy work in background.
+    setDraftMode(false);
+
+    void (async () => {
+      try {
+        const res = await fetch("/api/internalize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            captureItemId: itemId,
+            dryRun: false,
+            overrideMarkdown: content,
+            includeVideo,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(typeof data?.error === "string" ? data.error : "保存内化失败");
+        }
+        const nextSummary =
+          typeof data?.note?.summary === "string" && data.note.summary.trim()
+            ? data.note.summary.trim()
+            : undefined;
+        const nextTags = Array.isArray(data?.note?.tags) ? data.note.tags : undefined;
+        void onUpdate(itemId, {
+          status: "crystallized",
+          ...(nextSummary ? { summary: nextSummary } : {}),
+          ...(nextTags ? { tags: nextTags } : {}),
+        });
+        if (typeof data?.note?.content === "string") {
+          setAiNoteId(typeof data?.note?.id === "string" ? data.note.id : null);
+          setAiNoteTitle(typeof data?.note?.title === "string" ? data.note.title : item?.title || null);
+          setAiNoteContent(data.note.content);
+        }
+        setDraftCache((prev) => {
+          if (!prev[itemId]) return prev;
+          const next = { ...prev };
+          delete next[itemId];
+          return next;
+        });
+        setFinalizingInternalize(false);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "保存内化失败";
+        onDraftStartFailed?.(msg);
+      } finally {
+        setDraftLoading(false);
+        setFinalizingInternalize(false);
       }
-      await onUpdate(item!.id, { status: "crystallized" });
-      setDraftMode(false);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "保存内化失败";
-      setDraftError(msg);
-    } finally {
-      setDraftLoading(false);
-    }
+    })();
   }
 
   async function askInDrawer() {
@@ -326,41 +395,49 @@ export function InboxDrawer({
 
           <div className="flex-1 overflow-auto px-5 flex flex-col gap-4">
             <p className="text-[12.5px] text-[--text-secondary] leading-[1.8] bg-[--paper-light] border border-[--border-light] rounded-[7px] p-3">
-              已生成 AI 笔记草稿。你可以直接修改正文，确认后保存即可。
+              {draftLoading ? "内化中..." : "已生成 AI 笔记草稿。你可以直接修改正文，确认后保存即可。"}
             </p>
             {draftError && (
               <p className="text-[11px] text-red-500">{draftError}</p>
             )}
 
-            <div>
+            <div className="flex-1 min-h-0 flex flex-col">
               <div className={sectionTitleClass}>
                 <span className="inline-block w-[3px] h-3 rounded-[2px] bg-[--innex-accent]" />
                 AI 笔记正文
               </div>
               <textarea
-                className="w-full border border-[--border-medium] rounded-[7px] px-2.5 py-2.5 font-sans text-[12px] text-[--text-primary] resize-none min-h-[280px] leading-[1.6] bg-white focus:outline-none focus:border-[--innex-accent] transition-all"
+                className="draft-scrollbar w-full border border-[--border-medium] rounded-[7px] px-2.5 py-2.5 font-sans text-[12px] text-[--text-primary] resize-none min-h-[68vh] leading-[1.6] bg-white focus:outline-none focus:border-[--innex-accent] transition-all"
                 value={draftContent}
-                onChange={(e) => setDraftContent(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setDraftContent(next);
+                  if (item?.id) {
+                    setDraftCache((prev) => ({ ...prev, [item.id]: next }));
+                  }
+                }}
                 disabled={draftLoading}
               />
             </div>
           </div>
 
-          <div className="px-5 py-3 border-t border-[--border-light] shrink-0 flex gap-1.5 bg-white">
-            <button
-              onClick={exitDraftMode}
-              className={drawerButtonClass}
-            >
-              返回详情
-            </button>
-            <button
-              onClick={saveDraft}
-              disabled={internalizing || draftLoading}
-              className="flex-1 min-w-[80px] px-[10px] py-[7px] rounded-[6px] border border-[--innex-accent] bg-[--innex-accent] text-white text-[11px] font-medium hover:bg-[--innex-accent-hover] disabled:opacity-50 transition-colors ml-auto"
-            >
-              {draftLoading ? "保存中…" : internalizing ? "保存中…" : "确认内化"}
-            </button>
-          </div>
+          {!draftLoading && (
+            <div className="px-5 py-3 border-t border-[--border-light] shrink-0 flex gap-1.5 bg-white">
+              <button
+                onClick={exitDraftMode}
+                className={drawerButtonClass}
+              >
+                返回详情
+              </button>
+              <button
+                onClick={saveDraft}
+                disabled={internalizing}
+                className="flex-1 min-w-[120px] px-[10px] py-[7px] rounded-[6px] border border-[#F15A24] bg-[#F15A24] text-white text-[11px] font-medium hover:bg-[#d94a16] disabled:opacity-50 transition-colors ml-auto"
+              >
+                {internalizing ? "保存中…" : "确认内化"}
+              </button>
+            </div>
+          )}
         </div>
       </>
     );
@@ -536,6 +613,9 @@ export function InboxDrawer({
               <span className="inline-block w-[3px] h-3 rounded-[2px] bg-[--innex-accent]" />
               摘要
             </div>
+            {finalizingInternalize && (
+              <p className="text-[11px] text-[--innex-accent] mb-2">内化处理中，内容将自动更新...</p>
+            )}
             <p className="text-[12.5px] text-[--text-secondary] leading-[1.8] bg-[--paper-light] border border-[--border-light] rounded-[7px] p-3">
               {item.summary || item.raw_content?.slice(0, 300) || "暂无摘要"}
             </p>
@@ -668,6 +748,7 @@ export function InboxDrawer({
           {/* 查看原笔记 — all */}
           <button
             onClick={handleViewOriginal}
+            disabled={finalizingInternalize}
             className={drawerButtonClass}
           >
             查看原笔记
@@ -677,7 +758,7 @@ export function InboxDrawer({
           {s === "later" && (
             <button
               onClick={() => handleStatusChange("pending")}
-              disabled={statusChanging}
+              disabled={statusChanging || finalizingInternalize}
               className="flex-1 min-w-[80px] px-[10px] py-[7px] rounded-[6px] border border-[#f29a35] bg-[#f29a35] text-white text-[11px] font-sans font-medium hover:bg-[#e18314] disabled:opacity-50 transition-colors text-center cursor-pointer"
             >
               {statusChanging ? "处理中…" : "转待内化"}
@@ -687,11 +768,11 @@ export function InboxDrawer({
           {/* 一键内化 — later + pending */}
           {s !== "crystallized" && (
             <button
-              onClick={enterDraftMode}
-              disabled={internalizing}
+              onClick={() => enterDraftMode()}
+              disabled={internalizing || finalizingInternalize}
               className="flex-1 min-w-[80px] px-[10px] py-[7px] rounded-[6px] border border-[#f29a35] bg-[#f29a35] text-white text-[11px] font-sans font-medium hover:bg-[#e18314] disabled:opacity-50 transition-colors cursor-pointer"
             >
-              {internalizing ? "内化中…" : "一键内化"}
+              {internalizing || finalizingInternalize ? "内化中…" : "一键内化"}
             </button>
           )}
 
@@ -709,6 +790,7 @@ export function InboxDrawer({
           {/* 删除 — all */}
           <button
             onClick={() => setShowDeleteConfirm(true)}
+            disabled={isAnyInternalizing || finalizingInternalize}
             className="flex-1 min-w-[80px] px-[10px] py-[7px] rounded-[6px] border border-[--border-medium] bg-transparent text-[11px] text-[--text-secondary] font-medium hover:border-red-500 hover:text-red-500 hover:bg-red-50 transition-all text-center cursor-pointer"
           >
             删除
@@ -727,7 +809,11 @@ export function InboxDrawer({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-red-500 hover:bg-red-600">
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={isAnyInternalizing}
+              className="bg-red-500 hover:bg-red-600"
+            >
               确定删除
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -735,19 +821,4 @@ export function InboxDrawer({
       </AlertDialog>
     </>
   );
-}
-
-function buildFallbackDraft(item: CaptureItem): string {
-  const blocks = [
-    `# ${item.title || "未命名记录"}`,
-    "## 来源",
-    item.source || "-",
-    "## 摘要",
-    item.summary || "模型生成失败，请先基于原文手动整理要点。",
-    "## 我的理解",
-    item.my_understanding || "",
-    "## 原始内容",
-    item.raw_content || "（暂无原始文本，可在“查看原笔记”中查看原页面/附件）",
-  ];
-  return blocks.join("\n\n");
 }

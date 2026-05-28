@@ -5,7 +5,7 @@ import { QuickCapture } from "@/components/inbox/quick-capture";
 import { InboxToolbar } from "@/components/inbox/inbox-toolbar";
 import { InboxTable } from "@/components/inbox/inbox-table";
 import { InboxDrawer } from "@/components/inbox/inbox-drawer";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { CaptureItem } from "@/lib/supabase/types";
 
 export function InboxPage() {
@@ -26,6 +26,7 @@ export function InboxPage() {
   const [selectedItem, setSelectedItem] = useState<CaptureItem | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [internalizing, setInternalizing] = useState<string | null>(null);
+  const [startInternalizeForItemId, setStartInternalizeForItemId] = useState<string | null>(null);
   const [internalizeToast, setInternalizeToast] = useState<string | null>(null);
   const [deleteToast, setDeleteToast] = useState<string | null>(null);
   const [viewToast, setViewToast] = useState<string | null>(null);
@@ -65,37 +66,21 @@ export function InboxPage() {
     setTimeout(() => setSelectedItem(null), 200);
   }
 
+  useEffect(() => {
+    if (!selectedItem) return;
+    const latest = items.find((x) => x.id === selectedItem.id);
+    if (latest) setSelectedItem(latest);
+  }, [items, selectedItem]);
+
   const handleInternalize = useCallback(async (id: string, options?: { includeVideo?: boolean }) => {
     const target = items.find((x) => x.id === id);
-    const isVideo = target?.type === "video";
-    let includeVideo = Boolean(options?.includeVideo);
-
-    if (isVideo && options?.includeVideo === undefined) {
-      includeVideo = window.confirm("检测到视频链接。将先按文字内容内化，是否同时解析视频补充内容？");
-    }
-
+    if (!target) return;
     setInternalizing(id);
-    try {
-      const res = await fetch("/api/internalize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ captureItemId: id, includeVideo }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        await updateItem(id, { status: "crystallized" });
-      } else {
-        const message = typeof data?.error === "string" ? data.error : "内化失败，请稍后重试";
-        setInternalizeToast(message);
-        setTimeout(() => setInternalizeToast(null), 2500);
-      }
-    } catch {
-      setInternalizeToast("内化失败，请检查网络后重试");
-      setTimeout(() => setInternalizeToast(null), 2500);
-    } finally {
-      setInternalizing(null);
-    }
-  }, [items, updateItem]);
+    setSelectedItem(target);
+    setDrawerOpen(true);
+    setStartQaForItemId(null);
+    setStartInternalizeForItemId(id);
+  }, [items]);
 
   const handleDelete = useCallback(async (id: string) => {
     const result = await deleteItem(id);
@@ -185,6 +170,7 @@ export function InboxPage() {
               onAskFromItem={openQaDrawer}
               onStatusChange={(id, status) => updateItem(id, { status })}
               onInternalize={handleInternalize}
+              internalizingId={internalizing}
               onDelete={(id) => {
                 void handleDelete(id);
               }}
@@ -206,6 +192,18 @@ export function InboxPage() {
         onInternalize={handleInternalize}
         onViewOriginal={handleViewOriginal}
         internalizing={internalizing === selectedItem?.id}
+        isAnyInternalizing={Boolean(internalizing)}
+        startInternalizeForItemId={startInternalizeForItemId}
+        onDraftStarted={() => {
+          setStartInternalizeForItemId(null);
+          setInternalizing(null);
+        }}
+        onDraftStartFailed={(message) => {
+          setStartInternalizeForItemId(null);
+          setInternalizing(null);
+          setInternalizeToast(message);
+          setTimeout(() => setInternalizeToast(null), 2500);
+        }}
         startQaForItemId={startQaForItemId}
       />
 

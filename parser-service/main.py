@@ -1,9 +1,10 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import JSONResponse
 from docling.document_converter import DocumentConverter
 import tempfile
 import os
 import threading
+import pypdfium2 as pdfium
 
 app = FastAPI(title="INNEX Parser Service", version="0.1.0")
 _converter: DocumentConverter | None = None
@@ -33,7 +34,7 @@ def health():
 
 
 @app.post("/parse/pdf")
-async def parse_pdf(file: UploadFile = File(...)):
+async def parse_pdf(file: UploadFile = File(...), ocr: int = Form(0)):
     name = (file.filename or "").lower()
     if not name.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="only_pdf_supported")
@@ -47,6 +48,22 @@ async def parse_pdf(file: UploadFile = File(...)):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(data)
             tmp_path = tmp.name
+
+        # Default path: text-layer extraction without OCR.
+        # This is fast and avoids OCR-related OOM on scanned/complex pages.
+        if ocr != 1:
+            text = extract_text_with_pdfium(tmp_path)
+            if not text:
+                return JSONResponse(
+                    status_code=422,
+                    content={"ok": False, "error_code": "PDF_PARSE_EMPTY_TEXT", "detail": "pdfium_empty_text"},
+                )
+            return {
+                "ok": True,
+                "source": "pdfium_text_only",
+                "text": text,
+                "chars": len(text),
+            }
 
         converter = get_converter()
         result = converter.convert(tmp_path)
@@ -76,3 +93,33 @@ async def parse_pdf(file: UploadFile = File(...)):
                 os.remove(tmp_path)
             except Exception:
                 pass
+
+
+def extract_text_with_pdfium(pdf_path: str) -> str:
+    doc = pdfium.PdfDocument(pdf_path)
+    chunks: list[str] = []
+    try:
+        for i in range(len(doc)):
+            page = doc[i]
+            textpage = None
+            try:
+                textpage = page.get_textpage()
+                text = (textpage.get_text_range() or "").strip()
+                if text:
+                    chunks.append(text)
+            finally:
+                try:
+                    if textpage is not None:
+                        textpage.close()
+                except Exception:
+                    pass
+                try:
+                    page.close()
+                except Exception:
+                    pass
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+    return "\n\n".join(chunks).strip()

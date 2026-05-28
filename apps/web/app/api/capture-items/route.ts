@@ -261,14 +261,31 @@ export async function POST(request: Request) {
   }
 
   // 2. Light parse: generate title, source, summary, tags
-  // For URL types, use the fetched page content rather than just the URL string
-  const extraction = await extractReadableTextFromFiles(uploadedFiles, detected);
+  // Fast-path: for oversized document uploads, skip capture-time parsing immediately.
+  const oversizedDocAtCapture =
+    detected.type === "document" &&
+    uploadedFiles.some((f) => f.size > PARSE_RULES.DOCUMENT_CAPTURE_PARSE_MAX_BYTES);
+  const extraction = oversizedDocAtCapture
+    ? {
+        text: null,
+        notes: [
+          "extractor_version:pdfjs_v7_ocr_fallback",
+          ...uploadedFiles
+            .filter((f) => f.size > PARSE_RULES.DOCUMENT_CAPTURE_PARSE_MAX_BYTES)
+            .map(
+              (f) =>
+                `doc_extract_skipped_too_large_for_capture:${f.name}:size=${f.size}:limit=${PARSE_RULES.DOCUMENT_CAPTURE_PARSE_MAX_BYTES}`
+            ),
+          "file_extract_no_text",
+        ],
+      }
+    : await extractReadableTextFromFiles(uploadedFiles, detected);
   const extractedFromFiles = extraction.text;
 
   // Hard rule (requested): if PDF file is within read threshold, extraction must succeed.
   // Otherwise fail fast and do not create this capture item.
   const smallPdfFiles = uploadedFiles.filter(
-    (f) => f.name.toLowerCase().endsWith(".pdf") && f.size <= PARSE_RULES.DOCUMENT_READ_MAX_BYTES
+    (f) => f.name.toLowerCase().endsWith(".pdf") && f.size <= PARSE_RULES.DOCUMENT_CAPTURE_PARSE_MAX_BYTES
   );
   const requiredPdfFailNotes = extraction.notes.filter((n) => n.startsWith("required_pdf_failed:"));
   const requiredPdfFailed = requiredPdfFailNotes.length > 0;
@@ -276,6 +293,7 @@ export async function POST(request: Request) {
     extraction.notes.some((n) => n.includes("PDF_PARSE_SERVICE_UNREACHABLE")) ||
     extraction.notes.some((n) => n.startsWith("pdf_ocr_failed:") && n.includes("Setting up fake worker failed"));
   const shouldEnforcePdfHardFail = requiredPdfFailed && !hasPdfInfraFailure;
+  let parseRequiredFailedDetail: string | null = null;
   if (
     smallPdfFiles.length > 0 &&
     (shouldEnforcePdfHardFail || (!hasPdfInfraFailure && !(extractedFromFiles && extractedFromFiles.trim().length > 0)))
@@ -288,14 +306,7 @@ export async function POST(request: Request) {
       [ocrFail, ocrEmpty, renderFail, requiredFail].find(Boolean) ||
       extraction.notes.find((n) => n.startsWith("doc_extract_empty:")) ||
       "PDF_PARSE_REQUIRED_FAILED";
-    return NextResponse.json(
-      {
-        error: "阈值范围内 PDF 解析失败，请重试或更换文件后再上传",
-        error_code: "PDF_PARSE_REQUIRED_FAILED",
-        detail,
-      },
-      { status: 422 }
-    );
+    parseRequiredFailedDetail = detail;
   }
   const detectedForParsing =
     extractedFromFiles && extractedFromFiles.trim().length > 0
@@ -368,6 +379,14 @@ export async function POST(request: Request) {
       parsed.debug.notes.push("image_tags_forced_fallback");
     }
   }
+  if (
+    detected.type === "document" &&
+    (!parsed.summary || !parsed.summary.trim()) &&
+    extraction.notes.some((n) => n.startsWith("doc_extract_skipped_too_large_for_capture:"))
+  ) {
+    parsed.summary = "文件超过录入解析阈值，已先完成收录。请在内化阶段继续解析。";
+    parsed.debug.notes.push("document_parse_deferred_due_to_capture_size_limit");
+  }
   const persistedRawContent =
     extractedFromFiles ||
     effectiveUrlContent ||
@@ -408,7 +427,19 @@ export async function POST(request: Request) {
         ok: parsed.debug.model_tags_succeeded,
       },
     },
-    notes: [...parsed.debug.notes, ...extraction.notes],
+    parse_status:
+      extractedFromFiles && extractedFromFiles.trim().length > 0
+        ? "success"
+        : parseRequiredFailedDetail
+          ? "failed"
+          : "deferred",
+    parse_error_code: parseRequiredFailedDetail ? "PDF_PARSE_REQUIRED_FAILED" : undefined,
+    parse_error_detail: parseRequiredFailedDetail || undefined,
+    notes: [
+      ...parsed.debug.notes,
+      ...extraction.notes,
+      ...(parseRequiredFailedDetail ? [`parse_required_failed:${parseRequiredFailedDetail}`] : []),
+    ],
   };
 
   console.info("[capture-items.parse-result]", {
@@ -625,7 +656,7 @@ async function extractReadableTextFromFiles(
       continue;
     }
 
-    if (file.size <= PARSE_RULES.DOCUMENT_READ_MAX_BYTES) {
+    if (file.size <= PARSE_RULES.DOCUMENT_CAPTURE_PARSE_MAX_BYTES) {
       docExtractAttempted += 1;
       try {
         if (file.name.toLowerCase().endsWith(".pdf")) {
@@ -637,12 +668,12 @@ async function extractReadableTextFromFiles(
             continue;
           }
           if (external.errorCode && external.errorCode !== "PDF_PARSE_SERVICE_UNREACHABLE") {
-            notes.push(`required_pdf_failed:${file.name}:service_${external.errorCode}`);
             notes.push(`pdf_parser_service_failed:${file.name}:${external.detail || external.errorCode}`);
-            continue;
+            hasPdfInfraFailure = true;
+          } else {
+            hasPdfInfraFailure = true;
+            notes.push(`pdf_parser_service_unavailable:${file.name}:${external.detail || external.errorCode || "unreachable"}`);
           }
-          hasPdfInfraFailure = true;
-          notes.push(`pdf_parser_service_unavailable:${file.name}:${external.detail || external.errorCode || "unreachable"}`);
         }
 
         const extracted = await extractDocumentTextDetailed(file);
@@ -712,6 +743,10 @@ async function extractReadableTextFromFiles(
         const msg = err instanceof Error ? err.message : "doc_extract_unknown_error";
         notes.push(`doc_extract_failed:${file.name}:${msg.slice(0, 120)}`);
       }
+    } else {
+      notes.push(
+        `doc_extract_skipped_too_large_for_capture:${file.name}:size=${file.size}:limit=${PARSE_RULES.DOCUMENT_CAPTURE_PARSE_MAX_BYTES}`
+      );
     }
   }
 
@@ -727,12 +762,17 @@ async function extractReadableTextFromFiles(
 async function parsePdfWithService(file: File): Promise<{ ok: boolean; text?: string; errorCode?: string; detail?: string }> {
   const base = process.env.PARSER_SERVICE_URL?.trim();
   if (!base) return { ok: false };
-  const timeoutMs = Number(process.env.PARSER_SERVICE_TIMEOUT_MS || "120000");
+  const timeoutMs = Number(
+    process.env.PARSER_SERVICE_TIMEOUT_MS_CAPTURE ||
+    process.env.PARSER_SERVICE_TIMEOUT_MS ||
+    "120000"
+  );
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 120000);
   try {
     const form = new FormData();
     form.append("file", file);
+    form.append("ocr", "0");
     const res = await fetch(`${base.replace(/\/$/, "")}/parse/pdf`, {
       method: "POST",
       body: form,

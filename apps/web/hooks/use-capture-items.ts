@@ -12,12 +12,14 @@ type AddItemResult = {
 export function useCaptureItems() {
   const [items, setItems] = useState<CaptureItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [counts, setCounts] = useState({ all: 0, later: 0, pending: 0, crystallized: 0 });
 
-  const fetchItems = useCallback(async () => {
-    setLoading(true);
+  const fetchItems = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!silent && !hasLoadedOnce) setLoading(true);
     const params = new URLSearchParams();
     if (statusFilter !== "all") params.set("status", statusFilter);
     if (search) params.set("search", search);
@@ -40,8 +42,11 @@ export function useCaptureItems() {
         crystallized: Number(data?.crystallized || 0),
       });
     }
-    setLoading(false);
-  }, [statusFilter, search]);
+    if (!hasLoadedOnce) {
+      setLoading(false);
+      setHasLoadedOnce(true);
+    }
+  }, [statusFilter, search, hasLoadedOnce]);
 
   const hydrateItemProgressively = useCallback(async (id: string) => {
     const maxRounds = 8;
@@ -64,11 +69,11 @@ export function useCaptureItems() {
         // best-effort hydration
       }
     }
-    fetchItems();
+    void fetchItems({ silent: true });
   }, [fetchItems]);
 
   useEffect(() => {
-    fetchItems();
+    void fetchItems();
   }, [fetchItems]);
 
   const addItem = async (item: {
@@ -148,7 +153,7 @@ export function useCaptureItems() {
       const created = (await res.json()) as CaptureItem;
       setItems((prev) => [created, ...prev.filter((x) => x.id !== tempId)]);
       void hydrateItemProgressively(created.id);
-      fetchItems();
+      void fetchItems({ silent: true });
       return { success: true, item: created };
     }
     setItems((prev) => prev.filter((x) => x.id !== tempId));
@@ -176,7 +181,7 @@ export function useCaptureItems() {
       body: JSON.stringify(updates),
     });
     if (res.ok) {
-      fetchItems();
+      void fetchItems({ silent: true });
       return { success: true };
     }
     if (snapshot) {
@@ -196,7 +201,7 @@ export function useCaptureItems() {
       method: "DELETE",
     });
     if (res.ok) {
-      fetchItems();
+      void fetchItems({ silent: true });
       return { success: true };
     }
 
@@ -234,7 +239,7 @@ export function useCaptureItems() {
 
     const failedIds = results.filter((r) => !r.ok).map((r) => r.id);
     if (failedIds.length === 0) {
-      fetchItems();
+      void fetchItems({ silent: true });
       return { success: true };
     }
 
