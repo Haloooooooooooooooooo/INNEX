@@ -120,24 +120,30 @@ export function InboxTable({ items, loading, onSelect, onAskFromItem, onStatusCh
 
   return (
     <div className="bg-[--paper-light] h-full flex-1 min-h-0 overflow-hidden flex flex-col relative" onClick={closeContextMenu}>
-      <table className="w-full text-[12px] shrink-0">
-        <thead>
-          <tr className="border-b border-[--border-light] bg-[#eee8de]">
-            <th className="w-[34px] pl-3.5 py-[6px] text-left">
-              <input type="checkbox" checked={allSelected} onChange={(e) => toggleAll(e.target.checked)} className="w-3.5 h-3.5 rounded border-[--border-light] cursor-pointer" />
-            </th>
-            <th className="text-left px-3.5 py-[6px] text-[10px] font-semibold text-[--text-muted]">标题</th>
-            <th className="text-left px-3.5 py-[6px] text-[10px] font-semibold text-[--text-muted]">来源</th>
-            <th className="text-left px-3.5 py-[6px] text-[10px] font-semibold text-[--text-muted]">收录时间</th>
-            <th className="text-left px-3.5 py-[6px] text-[10px] font-semibold text-[--text-muted]">状态</th>
-            <th className="text-left px-3.5 py-[6px] text-[10px] font-semibold text-[--text-muted]">标签</th>
-            <th className="text-left px-3.5 py-[6px] text-[10px] font-semibold text-[--text-muted]">操作</th>
-          </tr>
-        </thead>
-      </table>
-
       <div className="list-scrollbar h-full flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-        <table className="w-full text-[12px]">
+        <table className="w-full text-[12px] table-fixed">
+          <colgroup>
+            <col className="w-[46px]" />
+            <col className="w-[260px]" />
+            <col className="w-[150px]" />
+            <col className="w-[210px]" />
+            <col className="w-[160px]" />
+            <col />
+            <col className="w-[280px]" />
+          </colgroup>
+          <thead className="sticky top-0 z-10">
+            <tr className="border-b border-[--border-light] bg-[#eee8de]">
+              <th className="w-[34px] pl-3.5 py-[6px] text-left">
+                <input type="checkbox" checked={allSelected} onChange={(e) => toggleAll(e.target.checked)} className="w-3.5 h-3.5 rounded border-[--border-light] cursor-pointer" />
+              </th>
+              <th className="text-left px-3.5 py-[6px] text-[10px] font-semibold text-[--text-muted]">标题</th>
+              <th className="text-left px-3.5 py-[6px] text-[10px] font-semibold text-[--text-muted]">来源</th>
+              <th className="text-left px-3.5 py-[6px] text-[10px] font-semibold text-[--text-muted]">收录时间</th>
+              <th className="text-left px-3.5 py-[6px] text-[10px] font-semibold text-[--text-muted]">状态</th>
+              <th className="text-left px-3.5 py-[6px] text-[10px] font-semibold text-[--text-muted]">标签</th>
+              <th className="text-left px-3.5 py-[6px] text-[10px] font-semibold text-[--text-muted]">操作</th>
+            </tr>
+          </thead>
           <tbody>
             {items.map((item) => {
               const st = statusConfig[item.status] || statusConfig.later;
