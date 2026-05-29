@@ -46,20 +46,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signUp = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({ email, password });
-    if (error) return { error: error.message };
-    router.push("/inbox");
-    router.refresh();
-    return {};
-  }, []);
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: typeof data?.error === "string" ? data.error : "注册失败" };
+      router.push("/inbox");
+      router.refresh();
+      return {};
+    } catch {
+      return { error: "网络连接失败，请检查网络后重试" };
+    }
+  }, [router]);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) return { error: error.message };
-    router.push("/inbox");
-    router.refresh();
-    return {};
-  }, []);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: typeof data?.error === "string" ? data.error : "登录失败" };
+      router.push("/inbox");
+      router.refresh();
+      return {};
+    } catch {
+      return { error: "网络连接失败，请检查网络后重试" };
+    }
+  }, [router]);
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();

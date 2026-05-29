@@ -4,6 +4,7 @@
 
 import { useMemo, useState } from "react";
 import type { CaptureItem, CaptureItemStatus } from "@/lib/supabase/types";
+import { WaveLoader } from "@/components/shared/wave-loader";
 
 interface InboxTableProps {
   items: CaptureItem[];
@@ -119,7 +120,7 @@ export function InboxTable({
   if (loading) {
     return (
       <div className="bg-[--paper-light] border border-black/[0.14] rounded-xl p-12 text-center text-sm text-muted-foreground shadow-[0_16px_36px_rgba(0,0,0,0.06)]">
-        加载中...
+        <WaveLoader label="列表加载中..." />
       </div>
     );
   }

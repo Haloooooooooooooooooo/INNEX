@@ -42,6 +42,21 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+@keyframes innex-wave-23 {
+  0% {
+    top: 0;
+    opacity: 1;
+  }
+  50% {
+    top: 22px;
+    opacity: 0.22;
+  }
+  100% {
+    top: 0;
+    opacity: 1;
+  }
+}
+
 :root {
   --paper: #EFEAE2;
   --paper-light: #F8F4ED;

@@ -4,6 +4,7 @@ import { useState, useEffect, type ReactNode } from "react";
 import { Send } from "lucide-react";
 import type { CaptureItem, CaptureItemStatus } from "@/lib/supabase/types";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { WaveLoader } from "@/components/shared/wave-loader";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -423,62 +424,70 @@ export function InboxDrawer({
           </div>
 
           <div className="flex-1 overflow-auto px-5 flex flex-col gap-4">
-            <p className="text-[12.5px] text-[--text-secondary] leading-[1.8] bg-[--paper-light] border border-[--border-light] rounded-[7px] p-3">
-              {draftLoading ? "内化中..." : "已生成 AI 笔记草稿。你可以直接修改正文，确认后保存即可。"}
-            </p>
-            {draftError && (
-              <p className="text-[11px] text-red-500">{draftError}</p>
-            )}
-
-            <div className="flex-1 min-h-0 flex flex-col">
-              <div className="flex items-center justify-between mb-2">
-                <div className={sectionTitleClass + " mb-0"}>
-                  <span className="inline-block w-[3px] h-3 rounded-[2px] bg-[--innex-accent]" />
-                  AI 笔记正文
-                </div>
-                <div className="flex gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setDraftViewMode("preview")}
-                    className={`px-2 py-1 text-[10px] rounded border ${draftViewMode === "preview" ? "border-[--innex-accent] text-[--innex-accent] bg-[--innex-accent-dim]" : "border-[--border-light] text-[--text-muted]"}`}
-                  >
-                    预览
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDraftViewMode("edit")}
-                    className={`px-2 py-1 text-[10px] rounded border ${draftViewMode === "edit" ? "border-[--innex-accent] text-[--innex-accent] bg-[--innex-accent-dim]" : "border-[--border-light] text-[--text-muted]"}`}
-                  >
-                    编辑
-                  </button>
-                </div>
+            {draftLoading ? (
+              <div className="flex-1 min-h-[68vh] flex items-center justify-center">
+                <WaveLoader size="xl" label="内化内容生成中" />
               </div>
-              {draftViewMode === "preview" ? (
-                <div className="draft-scrollbar w-full border border-[--border-medium] rounded-[7px] px-2.5 py-2.5 min-h-[68vh] bg-white overflow-auto">
-                  {draftContent.trim() ? (
-                    renderRichNote(draftContent)
+            ) : (
+              <>
+                <p className="text-[12.5px] text-[--text-secondary] leading-[1.8] bg-[--paper-light] border border-[--border-light] rounded-[7px] p-3">
+                  已生成 AI 笔记草稿。你可以直接修改正文，确认后保存即可。
+                </p>
+                {draftError && (
+                  <p className="text-[11px] text-red-500">{draftError}</p>
+                )}
+
+                <div className="flex-1 min-h-0 flex flex-col">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className={sectionTitleClass + " mb-0"}>
+                      <span className="inline-block w-[3px] h-3 rounded-[2px] bg-[--innex-accent]" />
+                      AI 笔记正文
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setDraftViewMode("preview")}
+                        className={`px-2 py-1 text-[10px] rounded border ${draftViewMode === "preview" ? "border-[--innex-accent] text-[--innex-accent] bg-[--innex-accent-dim]" : "border-[--border-light] text-[--text-muted]"}`}
+                      >
+                        预览
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDraftViewMode("edit")}
+                        className={`px-2 py-1 text-[10px] rounded border ${draftViewMode === "edit" ? "border-[--innex-accent] text-[--innex-accent] bg-[--innex-accent-dim]" : "border-[--border-light] text-[--text-muted]"}`}
+                      >
+                        编辑
+                      </button>
+                    </div>
+                  </div>
+                  {draftViewMode === "preview" ? (
+                    <div className="draft-scrollbar w-full border border-[--border-medium] rounded-[7px] px-2.5 py-2.5 min-h-[68vh] bg-white overflow-auto">
+                      {draftContent.trim() ? (
+                        renderRichNote(draftContent)
+                      ) : (
+                        <div className="text-[12px] text-[--text-muted]">暂无内容</div>
+                      )}
+                    </div>
                   ) : (
-                    <p className="text-[12px] text-[--text-muted]">内化内容生成中...</p>
+                    <textarea
+                      className="draft-scrollbar w-full border border-[--border-medium] rounded-[7px] px-2.5 py-2.5 font-sans text-[12px] text-[--text-primary] resize-none min-h-[68vh] leading-[1.6] bg-white focus:outline-none focus:border-[--innex-accent] transition-all"
+                      value={draftContent}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setDraftContent(next);
+                        if (item?.id) {
+                          setDraftCache((prev) => ({ ...prev, [item.id]: next }));
+                          if (typeof window !== "undefined") {
+                            window.localStorage.setItem(`${DRAFT_LOCAL_KEY_PREFIX}${item.id}`, next);
+                          }
+                        }
+                      }}
+                      disabled={draftLoading}
+                    />
                   )}
                 </div>
-              ) : (
-                <textarea
-                  className="draft-scrollbar w-full border border-[--border-medium] rounded-[7px] px-2.5 py-2.5 font-sans text-[12px] text-[--text-primary] resize-none min-h-[68vh] leading-[1.6] bg-white focus:outline-none focus:border-[--innex-accent] transition-all"
-                  value={draftContent}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setDraftContent(next);
-                    if (item?.id) {
-                      setDraftCache((prev) => ({ ...prev, [item.id]: next }));
-                      if (typeof window !== "undefined") {
-                        window.localStorage.setItem(`${DRAFT_LOCAL_KEY_PREFIX}${item.id}`, next);
-                      }
-                    }
-                  }}
-                  disabled={draftLoading}
-                />
-              )}
-            </div>
+              </>
+            )}
           </div>
 
           {!draftLoading && (

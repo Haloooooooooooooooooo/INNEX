@@ -41,6 +41,7 @@ const RELATION_MATCH_THRESHOLD = Math.max(
   0.3,
   Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_MATCH_THRESHOLD || 0.62))
 );
+const EXAMPLE_HINTS = ["例如", "案例", "示例", "实战", "模板", "样例", "case", "example", "template"];
 
 function isDeferredSummary(summary: string | null | undefined): boolean {
   const s = (summary || "").trim();
@@ -70,6 +71,37 @@ function normalizeTags(input: unknown): string[] {
   return out;
 }
 
+function normalizeConcepts(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const x of input) {
+    const t = typeof x === "string" ? x.replace(/[\uFFFD]/g, " ").replace(/\s+/g, " ").trim() : "";
+    if (!t) continue;
+    if (t === "-" || t === "—" || t === "暂无") continue;
+    if (t.length < 2 || t.length > 24) continue;
+    if (seen.has(t.toLowerCase())) continue;
+    seen.add(t.toLowerCase());
+    out.push(t);
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
+function inferRelationTypeLite(args: {
+  overlapCount: number;
+  sourceTitle: string;
+  sourceSummary: string;
+  targetTitle: string;
+  targetSummary: string;
+}): "related" | "supports" | "example_of" {
+  const blob = `${args.sourceTitle}\n${args.sourceSummary}\n${args.targetTitle}\n${args.targetSummary}`.toLowerCase();
+  const hasExampleSignal = EXAMPLE_HINTS.some((h) => blob.includes(h));
+  if (hasExampleSignal && args.overlapCount >= 1) return "example_of";
+  if (args.overlapCount >= 2) return "supports";
+  return "related";
+}
+
 function fallbackSummaryFromText(text: string): string {
   const clean = text.replace(/\s+/g, " ").trim();
   if (!clean) return "";
@@ -90,6 +122,14 @@ function heuristicTagsFromText(text: string, max = 6): string[] {
     .sort((a, b) => b[1] - a[1])
     .slice(0, max)
     .map(([k]) => k);
+}
+
+function cleanMojibakeLite(text: string): string {
+  return (text || "")
+    .replace(/\uFFFD/g, " ")
+    .replace(/[�]{2,}/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function buildInternalizeLayeredInput(args: {
@@ -409,9 +449,28 @@ export async function POST(request: Request) {
         { attempts: 2, timeoutMs: 25000 }
       );
       const parsed = JSON.parse(conceptsRaw.trim());
-      if (Array.isArray(parsed)) concepts = parsed;
+      if (Array.isArray(parsed)) concepts = normalizeConcepts(parsed);
     } catch {
       concepts = [];
+    }
+    if (concepts.length < 3) {
+      stage = "extract_concepts_retry";
+      try {
+        const retryRaw = await withRetry(
+          () =>
+            generateCompletion(
+              "你是概念抽取助手。只返回 JSON 数组，元素为2-20字中文术语，最多12个。",
+              `从以下内容抽取概念，优先抽取“方法、指标、实体、流程名词”。\n\n标题：${item.title || ""}\n\n正文：\n${markdown.substring(0, 3200)}`,
+              { temperature: 0.1, maxOutputTokens: 220, useCase: "internalize" }
+            ),
+          { attempts: 2, timeoutMs: 22000 }
+        );
+        const retryParsed = JSON.parse(retryRaw.trim());
+        const retryConcepts = normalizeConcepts(retryParsed);
+        if (retryConcepts.length > concepts.length) concepts = retryConcepts;
+      } catch {
+        // ignore and keep current concepts
+      }
     }
 
     let summary = isDeferredSummary(item.summary) ? "" : (item.summary || "");
@@ -435,6 +494,7 @@ export async function POST(request: Request) {
         summary = fallbackSummaryFromText(markdown);
       }
     }
+    summary = cleanMojibakeLite(summary || "");
 
     let generatedTags: string[] = normalizeTags(item.tags);
     const shouldGenerateTags = generatedTags.length === 0;
@@ -458,6 +518,8 @@ export async function POST(request: Request) {
         generatedTags = heuristicTagsFromText(`${item.title || ""}\n${markdown}`);
       }
     }
+    generatedTags = normalizeTags(generatedTags.map((x) => cleanMojibakeLite(x)));
+    concepts = normalizeConcepts(concepts.map((x) => cleanMojibakeLite(x)));
 
     if (dryRun) {
       console.info("[internalize] dry_run_success", { trace_id: traceId, user_id: user.id, capture_item_id: item.id });
@@ -538,6 +600,8 @@ export async function POST(request: Request) {
     stage = "build_relations";
     try {
       let createdCount = 0;
+      let embeddingRecallCandidates = 0;
+      let fallbackUsed = false;
       const chunkEmbeddings = await supabase
         .from("note_chunks")
         .select("chunk_index, embedding")
@@ -577,6 +641,7 @@ export async function POST(request: Request) {
         const similar = Array.from(mergedByNote.values())
           .sort((a, b) => b.similarity - a.similarity)
           .slice(0, MAX_RELATIONS_PER_NOTE);
+        embeddingRecallCandidates = similar.length;
 
         if (similar.length > 0) {
           const seenNoteIds = new Set<string>();
@@ -620,7 +685,13 @@ export async function POST(request: Request) {
             ]);
             const overlap = [...sourceKeywords].filter((k) => targetKeywords.has(k)).slice(0, 3);
             const overlapCount = overlap.length;
-            const relationType = overlapCount >= 2 ? "supports" : "related";
+            const relationType = inferRelationTypeLite({
+              overlapCount,
+              sourceTitle: note.title || "",
+              sourceSummary: summary || "",
+              targetTitle: targetMeta?.title || "",
+              targetSummary: targetMeta?.summary || "",
+            });
             const confidenceBase = overlapCount >= 2 ? similarity + 0.06 : similarity;
             const confidence = Math.max(0.5, Math.min(0.98, confidenceBase));
             const evidenceSummaryParts = [
@@ -680,9 +751,14 @@ export async function POST(request: Request) {
         }
       }
 
-      // Fallback: when embedding recall yields no relation, build lightweight links from
-      // structured overlap signals so graph won't be completely disconnected.
-      if (createdCount === 0) {
+      // Fallback supplement: build lightweight links from structured overlap signals.
+      // This helps construct a broader knowledge network while keeping confidence layered.
+      if (createdCount < MAX_RELATIONS_PER_NOTE) {
+        fallbackUsed = true;
+        const existingTargets = new Set<string>();
+        for (const r of relations as Array<{ target_note_id?: string }>) {
+          if (r?.target_note_id) existingTargets.add(r.target_note_id);
+        }
         const { data: candidateRows } = await supabase
           .from("notes")
           .select("id, title, summary, tags, concepts")
@@ -718,13 +794,21 @@ export async function POST(request: Request) {
             const score = sharedStructured.length * 2 + keywordHits.length;
             return { row, score, sharedStructured, keywordHits };
           })
-          .filter((x) => x.score >= 1)
+          .filter((x) => x.score >= 2)
           .sort((a, b) => b.score - a.score)
           .slice(0, MAX_RELATIONS_PER_NOTE);
 
         for (const item2 of scored) {
-          const relationType = item2.sharedStructured.length >= 2 ? "supports" : "related";
-          const confidence = Math.min(0.86, 0.56 + item2.score * 0.05);
+          if (existingTargets.has(item2.row.id)) continue;
+          if (createdCount >= MAX_RELATIONS_PER_NOTE) break;
+          const relationType = inferRelationTypeLite({
+            overlapCount: item2.sharedStructured.length,
+            sourceTitle: note.title || "",
+            sourceSummary: summary || "",
+            targetTitle: item2.row.title || "",
+            targetSummary: item2.row.summary || "",
+          });
+          const confidence = Math.min(0.82, 0.5 + item2.score * 0.05);
           const evidenceSummary = [
             `结构重叠=${item2.sharedStructured.join("、") || "无"}`,
             `关键词命中=${item2.keywordHits.join("、") || "无"}`,
@@ -753,38 +837,19 @@ export async function POST(request: Request) {
           if (ins.data) {
             relations.push(ins.data);
             createdCount += 1;
+            existingTargets.add(item2.row.id);
           }
         }
 
-        // Cold-start fallback: if still zero relation, connect to a few recent notes
-        // with low confidence so graph is not fully disconnected.
-        if (createdCount === 0) {
-          const recentCandidates = (candidateRows || []).slice(0, Math.min(3, MAX_RELATIONS_PER_NOTE));
-          for (const row of recentCandidates) {
-            const ins = await supabase
-              .from("note_relations")
-              .insert({
-                user_id: user.id,
-                source_note_id: note.id,
-                target_note_id: row.id,
-                relation_type: "related",
-                confidence: 0.5,
-                evidence: {
-                  stage: "phase4_relation_generation",
-                  method: "cold_start_recent_note_fallback",
-                  evidence_summary: "向量与结构信号均不足，采用冷启动最近笔记兜底建边",
-                },
-                is_auto_generated: true,
-              })
-              .select()
-              .single();
-            if (ins.data) {
-              relations.push(ins.data);
-              createdCount += 1;
-            }
-          }
-        }
       }
+      console.info("[internalize] relation_diagnostics", {
+        trace_id: traceId,
+        capture_item_id: item.id,
+        note_id: note.id,
+        embedding_recall_candidates: embeddingRecallCandidates,
+        fallback_used: fallbackUsed,
+        final_relations_count: createdCount,
+      });
     } catch {
       // non-fatal
     }
