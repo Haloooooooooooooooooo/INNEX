@@ -268,8 +268,9 @@ function getOcrConfig() {
   const baseURL = (process.env.OCR_OPENAI_BASE_URL || EMBEDDING_ENDPOINT.baseURL || providerBaseURL("openai")).replace(/\/$/, "");
   const apiKey = process.env.OCR_OPENAI_API_KEY || EMBEDDING_ENDPOINT.apiKey || LLM_PROVIDERS.openai.apiKey;
   const modelPrimary = process.env.OCR_OPENAI_MODEL || "Qwen/Qwen3-Omni-30B-A3B-Instruct";
-  // keep OCR deterministic: only use explicitly configured model
-  const candidates = [modelPrimary]
+  const modelFallbackA = process.env.OPENAI_VISION_MODEL || "";
+  const modelFallbackB = process.env.OPENAI_CHAT_MODEL || "";
+  const candidates = [modelPrimary, modelFallbackA, modelFallbackB]
     .filter(Boolean)
     .filter((v, i, arr) => arr.indexOf(v) === i);
   return { baseURL, apiKey, candidates };

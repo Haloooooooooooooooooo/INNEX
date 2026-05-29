@@ -57,9 +57,108 @@ type UrlFetchResult = {
   imageUrls: string[];
   imageCount: number;
   platform: "xiaohongshu" | "wechat" | "generic";
+  notes: string[];
 };
 
-const XIAOHONGSHU_INLINE_OCR_LIMIT = 5;
+function isLikelyXhsLoginWallText(text: string): boolean {
+  const s = (text || "").toLowerCase();
+  if (!s.trim()) return false;
+  const hitKeywords = [
+    "登录",
+    "获取验证码",
+    "验证码",
+    "手机号",
+    "扫码登录",
+    "微信扫码",
+    "新用户可直接登录",
+  ];
+  const hits = hitKeywords.filter((k) => s.includes(k.toLowerCase())).length;
+  return hits >= 2;
+}
+
+function detectPlatformFromUrl(url: string | null | undefined): "xiaohongshu" | "wechat" | "generic" {
+  const u = (url || "").toLowerCase();
+  if (!u) return "generic";
+  if (u.includes("xhslink.com") || u.includes("xiaohongshu.com")) return "xiaohongshu";
+  if (u.includes("mp.weixin.qq.com")) return "wechat";
+  return "generic";
+}
+
+function normalizeOcrText(input: string, maxChars = 4000): string {
+  const raw = (input || "").replace(/\r\n/g, "\n").trim();
+  if (!raw) return "";
+
+  const lines = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (!lines.length) return "";
+
+  const seenCount = new Map<string, number>();
+  const kept: string[] = [];
+
+  for (const line of lines) {
+    const prev = seenCount.get(line) || 0;
+    // Keep at most 2 identical lines globally to suppress OCR loop spam.
+    if (prev >= 2) continue;
+    // Remove immediate duplicates.
+    if (kept.length > 0 && kept[kept.length - 1] === line) continue;
+    seenCount.set(line, prev + 1);
+    kept.push(line);
+  }
+
+  // Collapse short repeated pattern windows (A,B,A,B,...).
+  const collapsed: string[] = [];
+  for (const line of kept) {
+    const n = collapsed.length;
+    if (n >= 4) {
+      const a = collapsed[n - 4];
+      const b = collapsed[n - 3];
+      const c = collapsed[n - 2];
+      const d = collapsed[n - 1];
+      if (a === c && b === d && line === a) {
+        continue;
+      }
+    }
+    collapsed.push(line);
+  }
+
+  return collapsed.join("\n").slice(0, maxChars).trim();
+}
+
+function dedupeTextBlocks(blocks: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const block of blocks) {
+    const t = normalizeOcrText(block, 4000);
+    if (!t) continue;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
+function titleFromSummary(summary: string | null | undefined): string | null {
+  const s = (summary || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .trim();
+  if (!s) return null;
+  const first = s
+    .split(/\n|[。！？!?]/)
+    .map((x) => x.trim())
+    .find(Boolean);
+  if (!first) return null;
+  return first.slice(0, 30);
+}
+
+function isImagePlaceholderTitle(title: string | null | undefined): boolean {
+  const t = (title || "").trim();
+  if (!t || t === "-") return true;
+  return /^\d{4}\/\d{2}\/\d{2}\s+image$/i.test(t);
+}
+
 
 function formatSupabaseError(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -89,14 +188,17 @@ function isOptionalSourcesInfraError(message: string): boolean {
   );
 }
 
-async function refetchUrlContent(origin: string, url: string): Promise<UrlFetchResult> {
+async function refetchUrlContent(origin: string, url: string, cookie?: string): Promise<UrlFetchResult> {
   try {
     const res = await fetch(`${origin}/api/parse-url`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(cookie ? { cookie } : {}),
+      },
       body: JSON.stringify({ url }),
     });
-    if (!res.ok) return { title: null, content: null, imageUrls: [], imageCount: 0, platform: "generic" };
+    if (!res.ok) return { title: null, content: null, imageUrls: [], imageCount: 0, platform: "generic", notes: [] };
     const data = await res.json();
     return {
       title: typeof data.title === "string" ? data.title : null,
@@ -104,25 +206,72 @@ async function refetchUrlContent(origin: string, url: string): Promise<UrlFetchR
       imageUrls: Array.isArray(data.image_urls) ? data.image_urls.filter((x: unknown) => typeof x === "string") : [],
       imageCount: typeof data.image_count === "number" ? data.image_count : 0,
       platform: data.platform === "xiaohongshu" || data.platform === "wechat" ? data.platform : "generic",
+      notes: Array.isArray(data.notes) ? data.notes.filter((x: unknown) => typeof x === "string") : [],
     };
   } catch {
-    return { title: null, content: null, imageUrls: [], imageCount: 0, platform: "generic" };
+    return { title: null, content: null, imageUrls: [], imageCount: 0, platform: "generic", notes: [] };
   }
 }
 
-async function fetchRemoteImageAsDataUrl(url: string): Promise<string | null> {
-  try {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        Referer: "https://www.xiaohongshu.com/",
-      },
+async function fetchRemoteImageAsDataUrl(url: string): Promise<{ dataUrl: string | null; error: string | null }> {
+  const commonHeaders: Record<string, string> = {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    Referer: "https://www.xiaohongshu.com/",
+    Origin: "https://www.xiaohongshu.com",
+    Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+  };
+
+  const tryFetch = async (headers: Record<string, string>) =>
+    fetch(url, {
+      headers,
+      redirect: "follow",
     });
-    if (!res.ok) return null;
+
+  try {
+    let res = await tryFetch(commonHeaders);
+    if (res.status === 403) {
+      // Some CDN links require alternate referer variants; retry once.
+      const alt = {
+        ...commonHeaders,
+        Referer: "https://www.xiaohongshu.com/explore",
+      };
+      res = await tryFetch(alt);
+    }
+    if (!res.ok) return { dataUrl: null, error: `http_${res.status}` };
     const mime = res.headers.get("content-type") || "image/jpeg";
+    if (!mime.toLowerCase().startsWith("image/")) {
+      return { dataUrl: null, error: `non_image_content_type:${mime}` };
+    }
     const bytes = Buffer.from(await res.arrayBuffer());
-    return `data:${mime};base64,${bytes.toString("base64")}`;
+    if (bytes.length === 0) return { dataUrl: null, error: "empty_image_bytes" };
+    // Guard against oversized payloads causing model-side 400.
+    if (bytes.length > 8 * 1024 * 1024) return { dataUrl: null, error: `image_too_large:${bytes.length}` };
+    return { dataUrl: `data:${mime};base64,${bytes.toString("base64")}`, error: null };
+  } catch {
+    return { dataUrl: null, error: "fetch_exception" };
+  }
+}
+
+async function extractXhsRenderedPageOcrText(url: string): Promise<string | null> {
+  try {
+    const { chromium } = await import("playwright");
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage({
+        userAgent:
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      });
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 25000 });
+      await page.waitForTimeout(2500);
+      const shot = await page.screenshot({ fullPage: true, type: "png" });
+      const dataUrl = `data:image/png;base64,${Buffer.from(shot).toString("base64")}`;
+      const text = await extractTextFromImageDataUrl(dataUrl);
+      return text?.trim() ? text.trim().slice(0, 6000) : null;
+    } finally {
+      await browser.close();
+    }
   } catch {
     return null;
   }
@@ -135,30 +284,31 @@ async function extractRemoteImageSourcesForCapture(input: {
 }): Promise<ExtractedFileSource[]> {
   const { imageUrls, platform, notes } = input;
   if (platform !== "xiaohongshu" || imageUrls.length === 0) return [];
-  if (imageUrls.length > XIAOHONGSHU_INLINE_OCR_LIMIT) {
-    notes.push(`xhs_image_ocr_deferred:image_count=${imageUrls.length}:limit=${XIAOHONGSHU_INLINE_OCR_LIMIT}`);
-    return [];
-  }
 
   const sources: ExtractedFileSource[] = [];
   for (let i = 0; i < imageUrls.length; i += 1) {
     const url = imageUrls[i];
     try {
-      const dataUrl = await fetchRemoteImageAsDataUrl(url);
-      if (!dataUrl) {
-        notes.push(`xhs_image_fetch_failed:${i + 1}`);
+      const fetched = await fetchRemoteImageAsDataUrl(url);
+      if (!fetched.dataUrl) {
+        notes.push(`xhs_image_fetch_failed:${i + 1}:${fetched.error || "unknown"}`);
         continue;
       }
-      const text = await extractTextFromImageDataUrl(dataUrl);
+      const text = await extractTextFromImageDataUrl(fetched.dataUrl);
       if (!text?.trim()) {
         notes.push(`xhs_image_ocr_empty:${i + 1}`);
+        continue;
+      }
+      const normalized = normalizeOcrText(text, 4000);
+      if (!normalized) {
+        notes.push(`xhs_image_ocr_empty_after_normalize:${i + 1}`);
         continue;
       }
       sources.push({
         source_type: "image_ocr",
         source_label: `xhs_image_${i + 1}`,
         source_ref: `remote_url:${url}`,
-        content: text.trim().slice(0, 4000),
+        content: normalized,
         metadata: { origin: "remote_url", remote_url: url, image_index: i + 1, platform },
       });
     } catch (err) {
@@ -500,6 +650,7 @@ export async function POST(request: Request) {
     body = (await request.json()) as CaptureItemPayload;
   }
   const origin = new URL(request.url).origin;
+  const cookie = request.headers.get("cookie") || "";
   const { content, my_understanding, status, url_title, url_content, attachment_extracted_text, attachments } = body;
   const attachmentList = Array.isArray(attachments) ? attachments as { name: string; type: string; size: number }[] : [];
   const normalizedAttachments =
@@ -526,20 +677,31 @@ export async function POST(request: Request) {
   let fetchedUrlImageUrls: string[] = [];
   let fetchedUrlImageCount = 0;
   let fetchedUrlPlatform: "xiaohongshu" | "wechat" | "generic" = "generic";
+  let fetchedUrlNotes: string[] = [];
   if ((detected.type === "url" || detected.type === "video") && detected.source_url && !effectiveUrlContent) {
-    const refetched = await refetchUrlContent(origin, detected.source_url);
+    const refetched = await refetchUrlContent(origin, detected.source_url, cookie);
     effectiveUrlTitle = effectiveUrlTitle || refetched.title;
     effectiveUrlContent = refetched.content;
     urlFetchSucceeded = Boolean(refetched.content);
     fetchedUrlImageUrls = refetched.imageUrls;
     fetchedUrlImageCount = refetched.imageCount;
-    fetchedUrlPlatform = refetched.platform;
+    fetchedUrlPlatform = detectPlatformFromUrl(detected.source_url) !== "generic"
+      ? detectPlatformFromUrl(detected.source_url)
+      : refetched.platform;
+    fetchedUrlNotes = refetched.notes;
   }
   if ((detected.type === "url" || detected.type === "video") && detected.source_url && effectiveUrlContent && fetchedUrlImageUrls.length === 0) {
-    const refetched = await refetchUrlContent(origin, detected.source_url);
+    const refetched = await refetchUrlContent(origin, detected.source_url, cookie);
     fetchedUrlImageUrls = refetched.imageUrls;
     fetchedUrlImageCount = refetched.imageCount;
-    fetchedUrlPlatform = refetched.platform;
+    fetchedUrlPlatform = detectPlatformFromUrl(detected.source_url) !== "generic"
+      ? detectPlatformFromUrl(detected.source_url)
+      : refetched.platform;
+    fetchedUrlNotes = refetched.notes;
+  }
+  if ((detected.type === "url" || detected.type === "video") && detected.source_url) {
+    const forced = detectPlatformFromUrl(detected.source_url);
+    if (forced !== "generic") fetchedUrlPlatform = forced;
   }
 
   // 2. Light parse: generate title, source, summary, tags
@@ -570,6 +732,29 @@ export async function POST(request: Request) {
   });
   if (remoteImageSources.length > 0) {
     extraction.sources.push(...remoteImageSources);
+  } else if (
+    fetchedUrlPlatform === "xiaohongshu" &&
+    fetchedUrlImageCount === 0 &&
+    detected.source_url
+  ) {
+    const ocrText = await extractXhsRenderedPageOcrText(detected.source_url);
+    if (ocrText) {
+      if (isLikelyXhsLoginWallText(ocrText)) {
+        extraction.notes.push("xhs_login_wall_detected");
+        extraction.notes.push("xhs_render_page_ocr_discarded");
+      } else {
+        extraction.sources.push({
+          source_type: "image_ocr",
+          source_label: "xhs_page_screenshot_ocr",
+          source_ref: `remote_url:${detected.source_url}`,
+          content: ocrText,
+          metadata: { strategy: "xhs_render_page_screenshot_ocr" },
+        });
+        extraction.notes.push("xhs_render_page_ocr_used");
+      }
+    } else {
+      extraction.notes.push("xhs_render_page_ocr_empty");
+    }
   }
   const extractedFromFiles = extraction.text;
 
@@ -605,7 +790,9 @@ export async function POST(request: Request) {
       : ((detected.type === "url" || detected.type === "video") && !effectiveUrlContent)
         ? { ...detected, readable: false as const }
       : detected;
-  const urlImageOcrText = remoteImageSources.map((x) => x.content.trim()).filter(Boolean).join("\n\n").trim();
+  const urlImageOcrText = dedupeTextBlocks(
+    remoteImageSources.map((x) => x.content.trim()).filter(Boolean)
+  ).join("\n\n").trim();
   const parseInputSource =
     effectiveUrlContent && remoteImageSources.length > 0 ? "url_content_with_image_ocr" :
     effectiveUrlContent ? "url_content" :
@@ -679,6 +866,13 @@ export async function POST(request: Request) {
       parsed.tags = ["图片", "待识别", "补全"];
       parsed.debug.notes.push("image_tags_forced_fallback");
     }
+    if (isImagePlaceholderTitle(parsed.title)) {
+      const betterTitle = titleFromSummary(parsed.summary);
+      if (betterTitle) {
+        parsed.title = betterTitle;
+        parsed.debug.notes.push("image_title_refined_from_summary");
+      }
+    }
   }
   if (
     detected.type === "document" &&
@@ -686,10 +880,13 @@ export async function POST(request: Request) {
     extraction.notes.some((n) => n.startsWith("doc_extract_skipped_too_large_for_capture:"))
   ) {
     parsed.summary = "文件超过录入解析阈值，已先完成收录。请在内化阶段继续解析。";
+    if (!Array.isArray(parsed.tags) || parsed.tags.length === 0 || (parsed.tags.length === 1 && parsed.tags[0] === "-")) {
+      parsed.tags = ["大文件", "待内化", "文档"];
+    }
     parsed.debug.notes.push("document_parse_deferred_due_to_capture_size_limit");
   }
   const persistedRawContent =
-    [effectiveUrlContent || "", urlImageOcrText, extractedFromFiles || ""]
+    [effectiveUrlContent || "", urlImageOcrText, normalizeOcrText(extractedFromFiles || "", 6000)]
       .filter(Boolean)
       .join("\n\n")
       .trim() ||
@@ -708,10 +905,6 @@ export async function POST(request: Request) {
     url_fetch_succeeded: detected.type === "url" || detected.type === "video" ? urlFetchSucceeded : undefined,
     url_platform: detected.type === "url" || detected.type === "video" ? fetchedUrlPlatform : undefined,
     url_image_count: detected.type === "url" || detected.type === "video" ? fetchedUrlImageCount : undefined,
-    image_ocr_deferred:
-      fetchedUrlPlatform === "xiaohongshu" && fetchedUrlImageCount > XIAOHONGSHU_INLINE_OCR_LIMIT ? true : undefined,
-    deferred_image_urls:
-      fetchedUrlPlatform === "xiaohongshu" && fetchedUrlImageCount > XIAOHONGSHU_INLINE_OCR_LIMIT ? fetchedUrlImageUrls : undefined,
     inline_image_ocr_count: remoteImageSources.length || undefined,
     file_extract_succeeded: uploadedFiles.length > 0 ? Boolean(extractedFromFiles) : undefined,
     file_extract_count: uploadedFiles.length || undefined,
@@ -748,6 +941,8 @@ export async function POST(request: Request) {
     notes: [
       ...parsed.debug.notes,
       ...extraction.notes,
+      ...fetchedUrlNotes,
+      ...(fetchedUrlPlatform === "xiaohongshu" && fetchedUrlImageCount === 0 ? ["xhs_image_urls_empty"] : []),
       ...(parseRequiredFailedDetail ? [`parse_required_failed:${parseRequiredFailedDetail}`] : []),
     ],
   };
@@ -761,20 +956,6 @@ export async function POST(request: Request) {
     persistedRawContent,
     parseInputSource,
   });
-  if (fetchedUrlPlatform === "xiaohongshu" && fetchedUrlImageCount > XIAOHONGSHU_INLINE_OCR_LIMIT) {
-    captureSourceDrafts.push({
-      source_type: "supplemental_text",
-      content: `小红书图文共 ${fetchedUrlImageCount} 张图片，录入阶段已延后全量 OCR，等待内化阶段补全。`,
-      is_primary: false,
-      parse_status: "deferred",
-      metadata: {
-        platform: fetchedUrlPlatform,
-        image_count: fetchedUrlImageCount,
-        image_ocr_deferred: true,
-      },
-    });
-  }
-
   console.info("[capture-items.parse-result]", {
     user_id: user.id,
     type: detected.type,

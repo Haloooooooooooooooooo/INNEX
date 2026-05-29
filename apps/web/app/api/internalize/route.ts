@@ -80,6 +80,125 @@ function heuristicTagsFromText(text: string, max = 6): string[] {
     .map(([k]) => k);
 }
 
+function buildInternalizeLayeredInput(args: {
+  primarySourceText: string;
+  supplementalText: string;
+  userUnderstandingText: string;
+  fallbackSummary: string;
+  attachmentContext: string;
+}) {
+  const primary = args.primarySourceText.trim();
+  const supplemental = args.supplementalText.trim();
+  const userGuide = args.userUnderstandingText.trim();
+  const fallbackSummary = args.fallbackSummary.trim();
+  const attachmentContext = args.attachmentContext.trim();
+
+  return [
+    `### 原始正文主体\n${primary || "（无）"}`,
+    supplemental ? `### 来源补充内容\n${supplemental}` : "",
+    userGuide ? `### 用户理解引导\n${userGuide}` : "",
+    fallbackSummary ? `### 过渡摘要（仅供参考）\n${fallbackSummary}` : "",
+    attachmentContext ? `### 附件清单\n${attachmentContext}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function ensureInternalizeStructure(markdown: string, title: string): string {
+  const canonicalSections = [
+    "核心内容",
+    "关键概念 / 关键信息",
+    "原文支持要点（事实）",
+    "推断与延展（非事实）",
+    "可关联方向",
+  ];
+  const lines = markdown.split(/\r?\n/);
+  const titleLine = lines.find((l) => /^#\s+/.test(l.trim())) || `# ${title || "未命名记录"}`;
+  const sectionMap = new Map<string, string[]>();
+  let currentKey: string | null = null;
+
+  for (const line of lines) {
+    const h2 = line.match(/^##\s+(.+)$/);
+    if (h2) {
+      const normalized = normalizeHeading(h2[1] || "");
+      const matched = canonicalSections.find((x) => normalized.includes(normalizeHeading(x)));
+      if (matched) {
+        currentKey = matched;
+        if (!sectionMap.has(matched)) sectionMap.set(matched, []);
+      } else {
+        currentKey = null;
+      }
+      continue;
+    }
+    if (!currentKey) continue;
+    sectionMap.get(currentKey)!.push(line);
+  }
+
+  const blocks: string[] = [titleLine.trim()];
+  for (const section of canonicalSections) {
+    const raw = (sectionMap.get(section) || []).join("\n").trim();
+    blocks.push(`## ${section}`);
+    blocks.push(raw || "（未提取到该部分）");
+  }
+  return blocks.join("\n\n").trim();
+}
+
+function extractMarkdownSection(markdown: string, heading: string): string {
+  const lines = markdown.split(/\r?\n/);
+  const target = normalizeHeading(heading);
+  let start = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = lines[i].match(/^##\s+(.+)$/);
+    if (!m) continue;
+    const current = normalizeHeading(m[1] || "");
+    if (current.includes(target)) {
+      start = i + 1;
+      break;
+    }
+  }
+  if (start < 0) return "";
+  const buff: string[] = [];
+  for (let i = start; i < lines.length; i += 1) {
+    if (/^##\s+/.test(lines[i])) break;
+    buff.push(lines[i]);
+  }
+  return buff.join("\n").trim();
+}
+
+function normalizeHeading(heading: string): string {
+  return heading
+    .replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\u200D\uFE0F]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildNoteChunksForRetrieval(markdown: string): string[] {
+  const factSection = extractMarkdownSection(markdown, "原文支持要点（事实）");
+  const coreSection = extractMarkdownSection(markdown, "核心内容");
+  const conceptSection = extractMarkdownSection(markdown, "关键概念 / 关键信息");
+  const inferSection = extractMarkdownSection(markdown, "推断与延展（非事实）");
+  const relatedSection = extractMarkdownSection(markdown, "可关联方向");
+
+  const factChunks = chunkSourceText(factSection, 700).map((x) => `[事实片段]\n${x}`);
+  const coreChunks = chunkSourceText([coreSection, conceptSection].filter(Boolean).join("\n\n"), 900).map(
+    (x) => `[内化片段]\n${x}`
+  );
+  const tailChunks = chunkSourceText([inferSection, relatedSection].filter(Boolean).join("\n\n"), 900).map(
+    (x) => `[延展片段]\n${x}`
+  );
+
+  const merged = [...factChunks, ...coreChunks, ...tailChunks];
+  const dedup: string[] = [];
+  const seen = new Set<string>();
+  for (const chunk of merged) {
+    const key = chunk.replace(/\s+/g, " ").trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    dedup.push(chunk.trim());
+  }
+  return dedup.slice(0, 30);
+}
+
 export async function POST(request: Request) {
   const traceId = randomUUID();
   let stage = "init";
@@ -199,15 +318,13 @@ export async function POST(request: Request) {
         { status: 422 }
       );
     }
-    const sourceContent = [
+    const sourceContent = buildInternalizeLayeredInput({
       primarySourceText,
-      sourceContext.supplementalText,
-      isDeferredSummary(item.summary) ? "" : (item.summary?.trim() || ""),
-      sourceContext.userUnderstanding || item.my_understanding?.trim() || "",
-      attachmentContext ? `附件列表:\n${attachmentContext}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+      supplementalText: sourceContext.supplementalText,
+      userUnderstandingText: sourceContext.userUnderstanding || item.my_understanding?.trim() || "",
+      fallbackSummary: isDeferredSummary(item.summary) ? "" : (item.summary?.trim() || ""),
+      attachmentContext,
+    });
 
     let videoEnrichment = "";
     stage = "video_enrichment";
@@ -259,12 +376,13 @@ export async function POST(request: Request) {
       );
     } catch (err: unknown) {
       generationError = err instanceof Error ? err.message : "草稿生成失败";
-      generatedMarkdown = `# ${item.title || "未命名记录"}\n\n## 摘要\n${item.summary || "模型暂不可用，请手动补充摘要。"}\n\n## 我的理解\n${item.my_understanding || ""}\n\n## 原始内容\n${internalizeInput}`;
+      generatedMarkdown = `# ${item.title || "未命名记录"}\n\n## 核心内容\n${item.summary || "模型暂不可用，请手动补充核心内容。"}\n\n## 关键概念 / 关键信息\n- 待补充\n\n## 原文支持要点（事实）\n- 待补充\n\n## 推断与延展（非事实）\n- 待补充\n\n## 可关联方向\n- 待补充\n\n## 原始输入\n${internalizeInput}`;
     }
     if (videoEnrichment && generatedMarkdown && !generatedMarkdown.includes("## 视频补充解析")) {
       generatedMarkdown = `${generatedMarkdown}\n\n${videoEnrichment}`;
     }
-    const markdown = typeof overrideMarkdown === "string" && overrideMarkdown.trim().length > 0 ? overrideMarkdown.trim() : generatedMarkdown;
+    const markdownRaw = typeof overrideMarkdown === "string" && overrideMarkdown.trim().length > 0 ? overrideMarkdown.trim() : generatedMarkdown;
+    const markdown = ensureInternalizeStructure(markdownRaw, item.title || "未命名记录");
 
     let concepts: string[] = [];
     stage = "extract_concepts";
@@ -378,7 +496,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const chunks = chunkMarkdown(markdown);
+    const chunks = buildNoteChunksForRetrieval(markdown);
     stage = "embed_chunks";
     for (let i = 0; i < chunks.length; i++) {
       try {
@@ -424,23 +542,69 @@ export async function POST(request: Request) {
 
         if (similar) {
           const seenNoteIds = new Set<string>();
+          const targetNoteIds = Array.from(
+            new Set((similar as Array<{ note_id: string }>).map((x) => x.note_id).filter((id) => id && id !== note.id))
+          ).slice(0, 12);
+          const targetNoteMeta = new Map<
+            string,
+            { title: string | null; summary: string | null; tags: string[] | null; concepts: string[] | null }
+          >();
+          if (targetNoteIds.length > 0) {
+            const { data: noteRows } = await supabase
+              .from("notes")
+              .select("id, title, summary, tags, concepts")
+              .eq("user_id", user.id)
+              .in("id", targetNoteIds);
+            for (const row of noteRows || []) {
+              targetNoteMeta.set(row.id, {
+                title: row.title || null,
+                summary: row.summary || null,
+                tags: Array.isArray(row.tags) ? (row.tags as string[]) : null,
+                concepts: Array.isArray(row.concepts) ? (row.concepts as string[]) : null,
+              });
+            }
+          }
+
+          const sourceKeywords = new Set<string>([
+            ...(generatedTags || []).map((x) => String(x).trim().toLowerCase()).filter(Boolean),
+            ...(Array.isArray(concepts) ? concepts : []).map((x) => String(x).trim().toLowerCase()).filter(Boolean),
+          ]);
+
           for (const match of similar as Array<{ note_id: string }>) {
             if (match.note_id === note.id || seenNoteIds.has(match.note_id)) continue;
             seenNoteIds.add(match.note_id);
 
             const similarity = Number((match as { similarity?: number }).similarity ?? 0.72);
-            const confidence = Math.max(0.5, Math.min(0.98, similarity));
+            const targetMeta = targetNoteMeta.get(match.note_id);
+            const targetKeywords = new Set<string>([
+              ...((targetMeta?.tags || []) as string[]).map((x) => String(x).trim().toLowerCase()).filter(Boolean),
+              ...((targetMeta?.concepts || []) as string[]).map((x) => String(x).trim().toLowerCase()).filter(Boolean),
+            ]);
+            const overlap = [...sourceKeywords].filter((k) => targetKeywords.has(k)).slice(0, 3);
+            const overlapCount = overlap.length;
+            const relationType = overlapCount >= 2 ? "supports" : "related";
+            const confidenceBase = overlapCount >= 2 ? similarity + 0.06 : similarity;
+            const confidence = Math.max(0.5, Math.min(0.98, confidenceBase));
+            const evidenceSummaryParts = [
+              `embedding相似度=${similarity.toFixed(3)}`,
+              overlapCount > 0 ? `共享概念=${overlap.join("、")}` : "共享概念不足",
+              targetMeta?.summary ? `目标摘要片段=${String(targetMeta.summary).slice(0, 80)}` : "目标摘要缺失",
+            ];
             let rel: unknown = null;
             const insertPayload = {
               user_id: user.id,
               source_note_id: note.id,
               target_note_id: match.note_id,
-              relation_type: "related",
+              relation_type: relationType,
               confidence,
               evidence: {
-                method: "embedding_similarity",
+                stage: "phase4_relation_generation",
+                method: "embedding_similarity_plus_overlap",
                 similarity,
+                overlap_count: overlapCount,
+                shared_concepts: overlap,
                 source_chunk: 0,
+                evidence_summary: evidenceSummaryParts.join("；"),
               },
               is_auto_generated: true,
             };
@@ -458,7 +622,7 @@ export async function POST(request: Request) {
                   user_id: user.id,
                   source_note_id: note.id,
                   target_note_id: match.note_id,
-                  relation_type: "related",
+                  relation_type: relationType,
                 })
                 .select()
                 .single();

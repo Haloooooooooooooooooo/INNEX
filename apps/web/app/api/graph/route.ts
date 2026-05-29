@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const DEFAULT_LIMIT = 300;
 const MAX_LIMIT = 1000;
+const ALLOWED_RELATION_TYPES = new Set(["related", "supports", "example_of"]);
 
 type GraphNode = {
   id: string;
@@ -44,7 +45,7 @@ export async function GET(request: NextRequest) {
   const search = searchParams.get("search")?.trim() || "";
   const tag = searchParams.get("tag")?.trim() || "";
   const concept = searchParams.get("concept")?.trim() || "";
-  const mode = (searchParams.get("mode")?.trim() || "note").toLowerCase();
+  const mode = "note";
   const focusNoteId = searchParams.get("focusNoteId")?.trim() || null;
   const centerNoteId = searchParams.get("centerNoteId")?.trim() || null;
   const rawHops = Number(searchParams.get("hops") || "0");
@@ -150,6 +151,7 @@ export async function GET(request: NextRequest) {
   const seenEdges = new Set<string>();
   const edges: GraphEdge[] = relations
     .filter((r) => r.source_note_id !== r.target_note_id)
+    .filter((r) => ALLOWED_RELATION_TYPES.has(r.relation_type))
     .filter((r) => {
       const a = r.source_note_id < r.target_note_id ? r.source_note_id : r.target_note_id;
       const b = r.source_note_id < r.target_note_id ? r.target_note_id : r.source_note_id;
@@ -240,57 +242,12 @@ export async function GET(request: NextRequest) {
     hops,
   });
 
-  let outputNodes: Array<Record<string, unknown>> = finalNodes;
-  let outputEdges: Array<Record<string, unknown>> = finalEdges;
-
-  if (mode === "entity") {
-    const entityNodes = new Map<string, { id: string; label: string; degree: number; kind: string }>();
-    const entityEdges = new Map<string, { id: string; source: string; target: string; type: string; confidence: number | null; createdAt: string }>();
-
-    const noteConcepts = new Map<string, string[]>();
-    for (const n of finalNodes) {
-      const concepts = [...(n.concepts || []), ...(n.tags || [])].filter(Boolean).slice(0, 10);
-      noteConcepts.set(n.id, concepts);
-      for (const c of concepts) {
-        const id = `ent:${c}`;
-        const old = entityNodes.get(id);
-        entityNodes.set(id, { id, label: c, degree: (old?.degree || 0) + 1, kind: "entity" });
-      }
-    }
-
-    for (const e of finalEdges) {
-      const a = noteConcepts.get(e.source) || [];
-      const b = noteConcepts.get(e.target) || [];
-      for (const ca of a) {
-        for (const cb of b) {
-          if (ca === cb) continue;
-          const s = `ent:${ca}`;
-          const t = `ent:${cb}`;
-          const key = s < t ? `${s}|${t}|${e.type}` : `${t}|${s}|${e.type}`;
-          if (!entityEdges.has(key)) {
-            entityEdges.set(key, {
-              id: `ee:${entityEdges.size + 1}`,
-              source: s,
-              target: t,
-              type: e.type,
-              confidence: e.confidence,
-              createdAt: e.createdAt,
-            });
-          }
-        }
-      }
-    }
-
-    outputNodes = Array.from(entityNodes.values());
-    outputEdges = Array.from(entityEdges.values());
-  }
-
   return NextResponse.json({
-    nodes: outputNodes,
-    edges: outputEdges,
+    nodes: finalNodes,
+    edges: finalEdges,
     meta: {
-      nodeCount: outputNodes.length,
-      edgeCount: outputEdges.length,
+      nodeCount: finalNodes.length,
+      edgeCount: finalEdges.length,
       truncated: (count || 0) > limit,
       limit,
       focusNoteId,

@@ -188,24 +188,6 @@ function fuseChunks(
   return fused.sort((a, b) => b.similarity - a.similarity);
 }
 
-async function detectContradictions(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-  noteIds: string[]
-) {
-  if (noteIds.length < 2) return 0;
-  const { data } = await supabase
-    .from("note_relations")
-    .select("id, source_note_id, target_note_id, relation_type")
-    .eq("user_id", userId)
-    .eq("relation_type", "contradicts")
-    .or(`source_note_id.in.(${noteIds.join(",")}),target_note_id.in.(${noteIds.join(",")})`);
-
-  if (!data?.length) return 0;
-  const idSet = new Set(noteIds);
-  return data.filter((r) => idSet.has(r.source_note_id) && idSet.has(r.target_note_id)).length;
-}
-
 export async function POST(request: Request) {
   const traceId = randomUUID();
   const supabase = await createClient();
@@ -306,7 +288,6 @@ export async function POST(request: Request) {
     }> = [];
     let evidenceLevel: "high" | "low" | "unknown" = "unknown";
     let evidenceScore = 0;
-    let contradictionCount = 0;
     let retrievalStage = "none";
 
     if (mode === "general") {
@@ -591,14 +572,6 @@ export async function POST(request: Request) {
       evidenceLevel = ev.level;
       evidenceScore = ev.score;
 
-      contradictionCount = await detectContradictions(
-        supabase,
-        user.id,
-        Array.from(new Set(fusedChunks.map((c) => c.note_id)))
-      );
-      if (contradictionCount > 0) {
-        evidenceLevel = evidenceLevel === "high" ? "low" : evidenceLevel;
-      }
     }
 
     let answerId: string | null = null;
@@ -645,7 +618,6 @@ export async function POST(request: Request) {
       evidence_items: citations.map((c) => ({ note_id: c.note_id, title: c.title, chunk_index: c.chunk_index })),
       uncertainties: [
         ...(evidenceLevel === "high" ? [] : ["证据强度较低，请谨慎采纳结论。建议补充同主题笔记或提高问题具体度。"]),
-        ...(contradictionCount > 0 ? [`检测到 ${contradictionCount} 条“互相矛盾”关系证据，请结合原文判断。`] : []),
       ],
       retrieval: { topK, threshold },
       retrieval_stage: retrievalStage,

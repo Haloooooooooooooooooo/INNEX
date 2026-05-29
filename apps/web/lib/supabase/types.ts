@@ -113,7 +113,7 @@ export interface Note {
   updated_at: string;
 }
 
-export type NoteRelationType = "related" | "extends" | "contradicts" | "derives_from";
+export type NoteRelationType = "related" | "supports" | "example_of";
 
 export interface NoteRelation {
   id: string;

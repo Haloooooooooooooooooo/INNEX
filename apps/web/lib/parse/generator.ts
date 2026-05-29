@@ -57,8 +57,18 @@ function normalizeSummaryText(content: string): string | null {
     .replace(/^["'`]+|["'`]+$/g, "")
     .trim();
   if (!plain) return null;
-
-  const compact = plain.slice(0, 140).trim();
+  const MAX = 220;
+  if (plain.length <= MAX) return plain;
+  const head = plain.slice(0, MAX);
+  const lastPunc = Math.max(
+    head.lastIndexOf("。"),
+    head.lastIndexOf("！"),
+    head.lastIndexOf("？"),
+    head.lastIndexOf("."),
+    head.lastIndexOf("!"),
+    head.lastIndexOf("?")
+  );
+  const compact = (lastPunc > 40 ? head.slice(0, lastPunc + 1) : head).trim();
   return compact || null;
 }
 
@@ -107,10 +117,11 @@ function normalizeTags(tags: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const t of tags) {
-    const v = stripMarkdownArtifacts((t || "").trim())
+    const v0 = stripMarkdownArtifacts((t || "").trim())
       .replace(/^第[一二三四五六七八九十百千万\d]+章/, "")
       .replace(/^第[一二三四五六七八九十百千万\d]+节/, "")
       .trim();
+    const v = v0.length > 14 ? v0.slice(0, 14).trim() : v0;
     if (!v || v.length <= 1) continue;
     if (generic.has(v.toLowerCase()) || generic.has(v)) continue;
     if (/^第[一二三四五六七八九十百千万\d]+[章节部分篇]$/.test(v)) continue;
@@ -130,7 +141,8 @@ function fallbackTitle(content: string): string | null {
       .map((line) => line.trim())
       .find(Boolean) || content.replace(/\s+/g, " ").trim();
   if (!normalized) return null;
-  return normalized.slice(0, 30);
+  const clause = normalized.split(/[。！？!?;；,:：]/).map((x) => x.trim()).find(Boolean) || normalized;
+  return clause.slice(0, 30);
 }
 
 function nowStampForTitle(): string {

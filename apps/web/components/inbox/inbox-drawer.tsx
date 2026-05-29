@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { Send } from "lucide-react";
 import type { CaptureItem, CaptureItemStatus } from "@/lib/supabase/types";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -49,6 +49,7 @@ const sectionTitleClass =
   "text-[11px] font-bold text-[--innex-accent] uppercase tracking-[0.06em] mb-2.5 flex items-center gap-1.5";
 const drawerButtonClass =
   "flex-1 min-w-[80px] px-[10px] py-[7px] rounded-[6px] border border-[--border-medium] bg-transparent text-[11px] text-[--text-secondary] font-medium hover:border-[--innex-accent] hover:text-[--innex-accent] hover:bg-[--innex-accent-dim] transition-all text-center cursor-pointer";
+const DRAFT_LOCAL_KEY_PREFIX = "internalize-draft:";
 
 export function InboxDrawer({
   item,
@@ -75,6 +76,7 @@ export function InboxDrawer({
   const [draftMode, setDraftMode] = useState(false);
   const [qaMode, setQaMode] = useState(false);
   const [draftContent, setDraftContent] = useState("");
+  const [draftViewMode, setDraftViewMode] = useState<"preview" | "edit">("preview");
   const [draftCache, setDraftCache] = useState<Record<string, string>>({});
   const [draftLoading, setDraftLoading] = useState(false);
   const [finalizingInternalize, setFinalizingInternalize] = useState(false);
@@ -99,6 +101,7 @@ export function InboxDrawer({
       setShowUnderstandingSave(false);
       setShowNotebookSave(false);
       setDraftMode(false);
+      setDraftViewMode("preview");
       setDraftIncludeVideo(false);
       setQaMode(false);
       setFinalizingInternalize(false);
@@ -131,14 +134,6 @@ export function InboxDrawer({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item?.id, startInternalizeForItemId]);
-
-  useEffect(() => {
-    // If internalization session is active for this item, reopening drawer should return to draft mode.
-    if (!item || !open || !internalizing) return;
-    if (draftMode || qaMode) return;
-    enterDraftMode();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item?.id, open, internalizing]);
 
   useEffect(() => {
     if (!item || item.status !== "crystallized") return;
@@ -221,6 +216,17 @@ export function InboxDrawer({
     const cached = item?.id ? (draftCache[item.id] || "") : "";
     if (cached.trim()) {
       setDraftContent(cached);
+      setDraftViewMode("preview");
+      setDraftMode(true);
+      options?.onStarted?.();
+      return;
+    }
+    const storageKey = `${DRAFT_LOCAL_KEY_PREFIX}${item!.id}`;
+    const cachedLocal = typeof window !== "undefined" ? window.localStorage.getItem(storageKey) || "" : "";
+    if (cachedLocal.trim()) {
+      setDraftContent(cachedLocal);
+      setDraftViewMode("preview");
+      setDraftCache((prev) => ({ ...prev, [item!.id]: cachedLocal }));
       setDraftMode(true);
       options?.onStarted?.();
       return;
@@ -233,6 +239,7 @@ export function InboxDrawer({
 
     setDraftIncludeVideo(includeVideo);
     setDraftContent("");
+    setDraftViewMode("preview");
     setDraftError(null);
     setDraftMode(true);
     setDraftLoading(true);
@@ -250,6 +257,7 @@ export function InboxDrawer({
         const content = typeof data?.draft?.content === "string" ? data.draft.content : "";
         setDraftContent(content);
         setDraftCache((prev) => ({ ...prev, [item!.id]: content }));
+        if (typeof window !== "undefined") window.localStorage.setItem(storageKey, content);
         options?.onStarted?.();
       })
       .catch((err: unknown) => {
@@ -334,6 +342,9 @@ export function InboxDrawer({
           delete next[itemId];
           return next;
         });
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem(`${DRAFT_LOCAL_KEY_PREFIX}${itemId}`);
+        }
         onInternalizeSaved?.();
         setFinalizingInternalize(false);
       } catch (err: unknown) {
@@ -384,13 +395,17 @@ export function InboxDrawer({
 
   // === DRAFT MODE ===
   if (draftMode) {
+    const closeDraft = () => {
+      exitDraftMode();
+      onClose();
+    };
     return (
       <>
         <div
           className={`fixed inset-0 bg-black/20 z-40 transition-opacity duration-200 ${
             open ? "opacity-100" : "opacity-0 pointer-events-none"
           }`}
-          onClick={onClose}
+          onClick={closeDraft}
         />
         <div
           className={`fixed right-0 top-0 h-full w-[min(460px,100%)] bg-white border-l border-[--border-light] shadow-[-10px_0_28px_rgba(0,0,0,0.12)] z-50 transition-transform duration-250 flex flex-col ${
@@ -400,7 +415,7 @@ export function InboxDrawer({
           <div className="flex items-center justify-between px-5 pt-5 pb-4 shrink-0">
             <span className="text-[15px] font-bold text-[--text-primary]">内化草稿</span>
             <button
-              onClick={onClose}
+              onClick={closeDraft}
               className="w-7 h-7 flex items-center justify-center rounded-md border border-[--border-medium] bg-transparent text-[--text-muted] text-sm hover:bg-[--paper] hover:text-[--text-primary] transition-all"
             >
               ×
@@ -416,22 +431,53 @@ export function InboxDrawer({
             )}
 
             <div className="flex-1 min-h-0 flex flex-col">
-              <div className={sectionTitleClass}>
-                <span className="inline-block w-[3px] h-3 rounded-[2px] bg-[--innex-accent]" />
-                AI 笔记正文
+              <div className="flex items-center justify-between mb-2">
+                <div className={sectionTitleClass + " mb-0"}>
+                  <span className="inline-block w-[3px] h-3 rounded-[2px] bg-[--innex-accent]" />
+                  AI 笔记正文
+                </div>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setDraftViewMode("preview")}
+                    className={`px-2 py-1 text-[10px] rounded border ${draftViewMode === "preview" ? "border-[--innex-accent] text-[--innex-accent] bg-[--innex-accent-dim]" : "border-[--border-light] text-[--text-muted]"}`}
+                  >
+                    预览
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDraftViewMode("edit")}
+                    className={`px-2 py-1 text-[10px] rounded border ${draftViewMode === "edit" ? "border-[--innex-accent] text-[--innex-accent] bg-[--innex-accent-dim]" : "border-[--border-light] text-[--text-muted]"}`}
+                  >
+                    编辑
+                  </button>
+                </div>
               </div>
-              <textarea
-                className="draft-scrollbar w-full border border-[--border-medium] rounded-[7px] px-2.5 py-2.5 font-sans text-[12px] text-[--text-primary] resize-none min-h-[68vh] leading-[1.6] bg-white focus:outline-none focus:border-[--innex-accent] transition-all"
-                value={draftContent}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setDraftContent(next);
-                  if (item?.id) {
-                    setDraftCache((prev) => ({ ...prev, [item.id]: next }));
-                  }
-                }}
-                disabled={draftLoading}
-              />
+              {draftViewMode === "preview" ? (
+                <div className="draft-scrollbar w-full border border-[--border-medium] rounded-[7px] px-2.5 py-2.5 min-h-[68vh] bg-white overflow-auto">
+                  {draftContent.trim() ? (
+                    renderRichNote(draftContent)
+                  ) : (
+                    <p className="text-[12px] text-[--text-muted]">内化内容生成中...</p>
+                  )}
+                </div>
+              ) : (
+                <textarea
+                  className="draft-scrollbar w-full border border-[--border-medium] rounded-[7px] px-2.5 py-2.5 font-sans text-[12px] text-[--text-primary] resize-none min-h-[68vh] leading-[1.6] bg-white focus:outline-none focus:border-[--innex-accent] transition-all"
+                  value={draftContent}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setDraftContent(next);
+                    if (item?.id) {
+                      setDraftCache((prev) => ({ ...prev, [item.id]: next }));
+                      if (typeof window !== "undefined") {
+                        window.localStorage.setItem(`${DRAFT_LOCAL_KEY_PREFIX}${item.id}`, next);
+                      }
+                    }
+                  }}
+                  disabled={draftLoading}
+                />
+              )}
             </div>
           </div>
 
@@ -722,10 +768,9 @@ export function InboxDrawer({
               </div>
               {aiNoteContent ? (
                 <div className="space-y-2">
-                  <p className="text-[12px] font-semibold text-[--text-primary]">{aiNoteTitle}</p>
-                  <p className="text-[12px] text-[--text-secondary] leading-relaxed whitespace-pre-wrap max-h-40 overflow-auto">
-                    {aiNoteContent}
-                  </p>
+                  <div className="max-h-64 overflow-auto rounded-md border border-[--border-light] bg-white px-3 py-2">
+                    {renderRichNote(aiNoteContent)}
+                  </div>
                 </div>
               ) : (
                 <p className="text-[12px] text-[--text-muted]">正在加载 AI 笔记...</p>
@@ -835,4 +880,97 @@ export function InboxDrawer({
       </AlertDialog>
     </>
   );
+}
+
+function renderRichNote(content: string) {
+  const cleanInline = (s: string) =>
+    s
+      .replace(/\*\*(.+?)\*\*/g, "$1")
+      .replace(/\*(.+?)\*/g, "$1")
+      .replace(/`(.+?)`/g, "$1")
+      .replace(/^#+\s*/g, "")
+      .trim();
+  const lines = content.split(/\r?\n/);
+  const nodes: ReactNode[] = [];
+  let listBuffer: string[] = [];
+  let quoteBuffer: string[] = [];
+
+  const flushList = () => {
+    if (!listBuffer.length) return;
+    nodes.push(
+      <ol key={`ol-${nodes.length}`} className="list-decimal pl-5 space-y-1 text-[12px] text-[--text-secondary] leading-[1.7]">
+        {listBuffer.map((item, i) => (
+          <li key={`${item}-${i}`} className="font-medium">{item}</li>
+        ))}
+      </ol>
+    );
+    listBuffer = [];
+  };
+
+  const flushQuote = () => {
+    if (!quoteBuffer.length) return;
+    nodes.push(
+      <blockquote key={`q-${nodes.length}`} className="border-l-2 border-[--innex-accent] bg-[--paper-light] px-2 py-1 text-[12px] text-[--text-secondary] leading-[1.7]">
+        {quoteBuffer.join("\n")}
+      </blockquote>
+    );
+    quoteBuffer = [];
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) {
+      flushList();
+      flushQuote();
+      continue;
+    }
+    const heading = line.match(/^(#{1,3})\s+(.+)/);
+    if (heading) {
+      flushList();
+      flushQuote();
+      const level = heading[1].length;
+      const text = cleanInline(heading[2]);
+      nodes.push(
+        level <= 1 ? (
+          <h2 key={`h-${nodes.length}`} className="mt-2 mb-1.5 text-[15px] font-extrabold text-[--text-primary]">
+            {text}
+          </h2>
+        ) : (
+          <h3 key={`h-${nodes.length}`} className="mt-2 mb-1 text-[14px] font-extrabold text-[--text-primary]">
+            {text}
+          </h3>
+        )
+      );
+      continue;
+    }
+    const ordered = line.match(/^\d+\.\s+(.+)/);
+    if (ordered) {
+      flushQuote();
+      listBuffer.push(cleanInline(ordered[1]));
+      continue;
+    }
+    const bullet = line.match(/^-\s+(.+)/);
+    if (bullet) {
+      flushQuote();
+      listBuffer.push(cleanInline(bullet[1]));
+      continue;
+    }
+    const quote = line.match(/^>\s*(.+)/);
+    if (quote) {
+      flushList();
+      quoteBuffer.push(quote[1]);
+      continue;
+    }
+    flushList();
+    flushQuote();
+    nodes.push(
+      <p key={`p-${nodes.length}`} className="text-[12px] text-[--text-secondary] leading-[1.8]">
+        {cleanInline(line)}
+      </p>
+    );
+  }
+
+  flushList();
+  flushQuote();
+  return <div className="space-y-2">{nodes}</div>;
 }

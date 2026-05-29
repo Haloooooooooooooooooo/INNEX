@@ -53,9 +53,6 @@ export function InboxPage() {
     setSelectedItem(item);
     setDrawerOpen(true);
     setStartQaForItemId(null);
-    if (internalizing === item.id) {
-      setStartInternalizeForItemId(item.id);
-    }
   }
 
   function openQaDrawer(item: CaptureItem) {
@@ -66,6 +63,7 @@ export function InboxPage() {
 
   function closeDrawer() {
     setDrawerOpen(false);
+    setStartInternalizeForItemId(null);
     setTimeout(() => setSelectedItem(null), 200);
   }
 

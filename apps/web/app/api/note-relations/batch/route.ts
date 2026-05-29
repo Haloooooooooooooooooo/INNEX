@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 
-const ALLOWED_TYPES = new Set(["related", "extends", "contradicts", "derives_from"]);
+const ALLOWED_TYPES = new Set(["related", "supports", "example_of"]);
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -40,4 +40,3 @@ export async function POST(request: Request) {
 
   return NextResponse.json({ error: "Invalid action" }, { status: 400 });
 }
-

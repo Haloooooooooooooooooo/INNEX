@@ -19,7 +19,7 @@ type NoteDetailResponse = {
   relations: Array<{ id: string; source_note_id: string; target_note_id: string; relation_type: string }>;
 };
 
-const RELATION_COLORS: Record<string, string> = { related: "#6B7280", extends: "#2563EB", contradicts: "#DC2626", derives_from: "#16A34A" };
+const RELATION_COLORS: Record<string, string> = { related: "#6B7280", supports: "#2563EB", example_of: "#16A34A" };
 const relationColor = (t: string) => RELATION_COLORS[t] || "#6B7280";
 const fmtDate = (value?: string) => (value ? new Date(value).toLocaleDateString("zh-CN") : "-");
 
@@ -56,7 +56,6 @@ const FORCE_LAYOUT = {
 
 export default function KbPage() {
   const [search, setSearch] = useState("");
-  const [mode, setMode] = useState<"note" | "entity">("note");
   const [graphData, setGraphData] = useState<GraphResponse>({ nodes: [], edges: [], meta: { nodeCount: 0, edgeCount: 0 } });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +65,6 @@ export default function KbPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [relationTypes, setRelationTypes] = useState<string[]>([]);
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
-  const [reloadKey, setReloadKey] = useState(0);
 
   const graphWrapRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<any>(null);
@@ -83,7 +81,6 @@ export default function KbPage() {
       try {
         const p = new URLSearchParams();
         if (search.trim()) p.set("search", search.trim());
-        p.set("mode", mode);
         p.set("limit", "300");
         const res = await fetch(`/api/graph?${p.toString()}`);
         if (!res.ok) throw new Error("图谱加载失败");
@@ -99,10 +96,10 @@ export default function KbPage() {
       } finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [search, mode, reloadKey]);
+  }, [search]);
 
   useEffect(() => {
-    if (!activeNoteId || mode !== "note" || activeNoteId.startsWith("ent:")) {
+    if (!activeNoteId) {
       setActiveNote(null);
       return;
     }
@@ -125,7 +122,7 @@ export default function KbPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeNoteId, mode]);
+  }, [activeNoteId]);
 
   useEffect(() => {
     if (!graphWrapRef.current) return;
@@ -213,7 +210,6 @@ export default function KbPage() {
         <div className="px-5 pb-4 shrink-0">
           <div className="flex items-center gap-2">
             <div className="relative"><Input placeholder="搜索节点标题或摘要..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-64 h-8 text-xs border-[--border-light] rounded-md pl-7" /><span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs opacity-40">🔍</span></div>
-            <select value={mode} onChange={(e) => { setMode(e.target.value as "note" | "entity"); setActiveNoteId(null); setReloadKey((k) => k + 1); }} className="h-8 text-xs border border-[--border-light] rounded-md px-2 bg-white"><option value="note">笔记图谱</option><option value="entity">实体图谱</option></select>
             <div className="flex flex-wrap gap-1.5">{relationTypes.map((t) => <button key={t} onClick={() => setSelectedTypes((p) => p.includes(t) ? p.filter((x) => x !== t) : [...p, t])} className={`text-[10px] px-2 py-1 rounded border ${selectedTypes.includes(t) ? "border-[--innex-accent] text-[--innex-accent] bg-[--innex-accent-dim]" : "border-[--border-light]"}`}>{t}</button>)}</div>
           </div>
         </div>
