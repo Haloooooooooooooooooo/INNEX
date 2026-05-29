@@ -29,6 +29,18 @@ const DEFERRED_SUMMARY_MARKERS = [
 ];
 const MIN_INTERNALIZE_SOURCE_CHARS = 120;
 const XIAOHONGSHU_INLINE_OCR_LIMIT = 5;
+const MAX_RELATIONS_PER_NOTE = Math.max(
+  1,
+  Math.min(50, Number(process.env.INTERNALIZE_MAX_RELATIONS_PER_NOTE || 30))
+);
+const RELATION_RECALL_CHUNK_COUNT = Math.max(
+  1,
+  Math.min(5, Number(process.env.INTERNALIZE_RELATION_RECALL_CHUNK_COUNT || 3))
+);
+const RELATION_MATCH_THRESHOLD = Math.max(
+  0.3,
+  Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_MATCH_THRESHOLD || 0.62))
+);
 
 function isDeferredSummary(summary: string | null | undefined): boolean {
   const s = (summary || "").trim();
@@ -525,26 +537,52 @@ export async function POST(request: Request) {
     const relations: unknown[] = [];
     stage = "build_relations";
     try {
-      const firstChunk = await supabase
+      let createdCount = 0;
+      const chunkEmbeddings = await supabase
         .from("note_chunks")
-        .select("embedding")
+        .select("chunk_index, embedding")
         .eq("note_id", note.id)
-        .eq("chunk_index", 0)
-        .single();
+        .in("chunk_index", Array.from({ length: RELATION_RECALL_CHUNK_COUNT }, (_, i) => i))
+        .order("chunk_index", { ascending: true });
 
-      if (firstChunk?.data?.embedding) {
-        const { data: similar } = await supabase.rpc("match_note_chunks", {
-          query_embedding: firstChunk.data.embedding,
-          match_threshold: 0.7,
-          match_count: 5,
-          p_user_id: user.id,
-        });
+      const embeddingRows =
+        (chunkEmbeddings.data || []).filter((r) => Boolean(r.embedding)) as Array<{
+          chunk_index: number;
+          embedding: unknown;
+        }>;
 
-        if (similar) {
+      if (embeddingRows.length > 0) {
+        const mergedByNote = new Map<string, { note_id: string; similarity: number; source_chunk: number }>();
+        for (const row of embeddingRows) {
+          const { data: recallRows } = await supabase.rpc("match_note_chunks", {
+            query_embedding: row.embedding,
+            match_threshold: RELATION_MATCH_THRESHOLD,
+            match_count: MAX_RELATIONS_PER_NOTE,
+            p_user_id: user.id,
+          });
+          for (const r of (recallRows || []) as Array<{ note_id: string; similarity?: number }>) {
+            if (!r.note_id || r.note_id === note.id) continue;
+            const similarity = Number(r.similarity ?? 0);
+            const prev = mergedByNote.get(r.note_id);
+            if (!prev || similarity > prev.similarity) {
+              mergedByNote.set(r.note_id, {
+                note_id: r.note_id,
+                similarity,
+                source_chunk: row.chunk_index,
+              });
+            }
+          }
+        }
+
+        const similar = Array.from(mergedByNote.values())
+          .sort((a, b) => b.similarity - a.similarity)
+          .slice(0, MAX_RELATIONS_PER_NOTE);
+
+        if (similar.length > 0) {
           const seenNoteIds = new Set<string>();
           const targetNoteIds = Array.from(
             new Set((similar as Array<{ note_id: string }>).map((x) => x.note_id).filter((id) => id && id !== note.id))
-          ).slice(0, 12);
+          ).slice(0, MAX_RELATIONS_PER_NOTE);
           const targetNoteMeta = new Map<
             string,
             { title: string | null; summary: string | null; tags: string[] | null; concepts: string[] | null }
@@ -570,7 +608,7 @@ export async function POST(request: Request) {
             ...(Array.isArray(concepts) ? concepts : []).map((x) => String(x).trim().toLowerCase()).filter(Boolean),
           ]);
 
-          for (const match of similar as Array<{ note_id: string }>) {
+          for (const match of similar as Array<{ note_id: string; similarity: number; source_chunk: number }>) {
             if (match.note_id === note.id || seenNoteIds.has(match.note_id)) continue;
             seenNoteIds.add(match.note_id);
 
@@ -603,7 +641,9 @@ export async function POST(request: Request) {
                 similarity,
                 overlap_count: overlapCount,
                 shared_concepts: overlap,
-                source_chunk: 0,
+                source_chunk: match.source_chunk,
+                recall_chunk_count: embeddingRows.length,
+                match_threshold: RELATION_MATCH_THRESHOLD,
                 evidence_summary: evidenceSummaryParts.join("；"),
               },
               is_auto_generated: true,
@@ -631,8 +671,117 @@ export async function POST(request: Request) {
               rel = insertNew.data;
             }
 
-            if (rel) relations.push(rel);
-            if (seenNoteIds.size >= 5) break;
+            if (rel) {
+              relations.push(rel);
+              createdCount += 1;
+            }
+            if (seenNoteIds.size >= MAX_RELATIONS_PER_NOTE) break;
+          }
+        }
+      }
+
+      // Fallback: when embedding recall yields no relation, build lightweight links from
+      // structured overlap signals so graph won't be completely disconnected.
+      if (createdCount === 0) {
+        const { data: candidateRows } = await supabase
+          .from("notes")
+          .select("id, title, summary, tags, concepts")
+          .eq("user_id", user.id)
+          .neq("id", note.id)
+          .order("created_at", { ascending: false })
+          .limit(40);
+
+        const normalize = (x: string) => x.trim().toLowerCase();
+        const sourceTerms = new Set<string>([
+          ...(generatedTags || []).map((x) => normalize(String(x))).filter(Boolean),
+          ...(Array.isArray(concepts) ? concepts : []).map((x) => normalize(String(x))).filter(Boolean),
+        ]);
+
+        const sourceText = `${note.title || ""}\n${summary || ""}`.toLowerCase();
+        const textTerms = Array.from(
+          new Set((sourceText.match(/[\u4e00-\u9fa5a-z0-9]{2,16}/g) || []).map((x) => x.trim()).filter(Boolean))
+        ).slice(0, 24);
+
+        const scored = (candidateRows || [])
+          .map((row) => {
+            const targetTerms = new Set<string>([
+              ...((Array.isArray(row.tags) ? row.tags : []) as string[]).map((x) => normalize(String(x))).filter(Boolean),
+              ...((Array.isArray(row.concepts) ? row.concepts : []) as string[])
+                .map((x) => normalize(String(x)))
+                .filter(Boolean),
+            ]);
+            const sharedStructured = [...sourceTerms].filter((t) => targetTerms.has(t)).slice(0, 4);
+
+            const targetText = `${row.title || ""}\n${row.summary || ""}`.toLowerCase();
+            const keywordHits = textTerms.filter((t) => t.length >= 2 && targetText.includes(t)).slice(0, 5);
+
+            const score = sharedStructured.length * 2 + keywordHits.length;
+            return { row, score, sharedStructured, keywordHits };
+          })
+          .filter((x) => x.score >= 1)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, MAX_RELATIONS_PER_NOTE);
+
+        for (const item2 of scored) {
+          const relationType = item2.sharedStructured.length >= 2 ? "supports" : "related";
+          const confidence = Math.min(0.86, 0.56 + item2.score * 0.05);
+          const evidenceSummary = [
+            `结构重叠=${item2.sharedStructured.join("、") || "无"}`,
+            `关键词命中=${item2.keywordHits.join("、") || "无"}`,
+            "判定来源=非向量兜底粗筛",
+          ].join("；");
+
+          const ins = await supabase
+            .from("note_relations")
+            .insert({
+              user_id: user.id,
+              source_note_id: note.id,
+              target_note_id: item2.row.id,
+              relation_type: relationType,
+              confidence,
+              evidence: {
+                stage: "phase4_relation_generation",
+                method: "structured_overlap_fallback",
+                shared_concepts: item2.sharedStructured,
+                keyword_hits: item2.keywordHits,
+                evidence_summary: evidenceSummary,
+              },
+              is_auto_generated: true,
+            })
+            .select()
+            .single();
+          if (ins.data) {
+            relations.push(ins.data);
+            createdCount += 1;
+          }
+        }
+
+        // Cold-start fallback: if still zero relation, connect to a few recent notes
+        // with low confidence so graph is not fully disconnected.
+        if (createdCount === 0) {
+          const recentCandidates = (candidateRows || []).slice(0, Math.min(3, MAX_RELATIONS_PER_NOTE));
+          for (const row of recentCandidates) {
+            const ins = await supabase
+              .from("note_relations")
+              .insert({
+                user_id: user.id,
+                source_note_id: note.id,
+                target_note_id: row.id,
+                relation_type: "related",
+                confidence: 0.5,
+                evidence: {
+                  stage: "phase4_relation_generation",
+                  method: "cold_start_recent_note_fallback",
+                  evidence_summary: "向量与结构信号均不足，采用冷启动最近笔记兜底建边",
+                },
+                is_auto_generated: true,
+              })
+              .select()
+              .single();
+            if (ins.data) {
+              relations.push(ins.data);
+              createdCount += 1;
+            }
           }
         }
       }
@@ -659,6 +808,9 @@ export async function POST(request: Request) {
       note_id: note.id,
       chunk_count: chunks.length,
       relation_count: relations.length,
+      relation_recall_chunk_count: RELATION_RECALL_CHUNK_COUNT,
+      relation_match_threshold: RELATION_MATCH_THRESHOLD,
+      relation_max_per_note: MAX_RELATIONS_PER_NOTE,
     });
 
     return NextResponse.json({ note, relations, concepts, status: "success", trace_id: traceId }, { status: 201 });

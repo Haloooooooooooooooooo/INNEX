@@ -144,7 +144,7 @@ export default function KbPage() {
           animation: false,
           data: { nodes: [], edges: [] },
           node: { style: { labelText: (d: any) => String(d.label || "").slice(0, 12), labelPlacement: "bottom", labelFontSize: 9, fill: "#F15A24", fillOpacity: 0.2, stroke: "#F15A24", lineWidth: 1.5, size: (d: any) => 16 + Math.min((d.degree || 0) * 2, 18) } },
-          edge: { style: { stroke: (d: any) => relationColor(d.type || "related"), strokeOpacity: (d: any) => (typeof d.confidence === "number" ? Math.max(0.25, Math.min(0.9, d.confidence)) : 0.35), lineWidth: 1 } },
+          edge: { style: { stroke: (d: any) => relationColor(d.relationType || "related"), strokeOpacity: (d: any) => (typeof d.confidence === "number" ? Math.max(0.25, Math.min(0.9, d.confidence)) : 0.35), lineWidth: 1 } },
           layout: FORCE_LAYOUT,
           behaviors: ["drag-canvas", "zoom-canvas", "drag-element", "hover-activate"],
         });
@@ -177,7 +177,12 @@ export default function KbPage() {
           nodes: hasEdges
             ? spreadNodes(nodes, rect.width, rect.height)
             : spreadNodes(nodes, rect.width, rect.height),
-          edges: edges.map((e) => ({ ...e, id: e.id })),
+          edges: edges.map((e) => ({
+            ...e,
+            id: e.id,
+            relationType: e.type || "related",
+            type: "line",
+          })),
         })
       );
       if (typeof graph.draw === "function") await safeRun(() => graph.draw()); else await safeRun(() => graph.render());

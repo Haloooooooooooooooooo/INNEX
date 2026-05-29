@@ -297,6 +297,7 @@ function normalizeVisionContent(content: unknown): string {
 async function runVisionPrompt(input: { dataUrl: string; prompt: string; maxTokens: number; temperature: number }) {
   const { baseURL, apiKey, candidates } = getOcrConfig();
   if (!apiKey) throw new Error("vision api key missing (OCR_OPENAI_API_KEY/EMBEDDING_OPENAI_API_KEY/OPENAI_API_KEY)");
+  const timeoutMs = Math.max(3000, Number(process.env.OCR_REQUEST_TIMEOUT_MS || 25000));
 
   const payloadBuilders = [
     (model: string) => ({
@@ -316,20 +317,30 @@ async function runVisionPrompt(input: { dataUrl: string; prompt: string; maxToke
   let lastError = "vision_unknown_error";
   for (const model of candidates) {
     for (const buildPayload of payloadBuilders) {
-      const res = await fetch(`${baseURL}/chat/completions`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(buildPayload(model)),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return data?.choices?.[0]?.message?.content;
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const res = await fetch(`${baseURL}/chat/completions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(buildPayload(model)),
+          signal: controller.signal,
+        }).finally(() => {
+          clearTimeout(timer);
+        });
+        if (res.ok) {
+          const data = await res.json();
+          return data?.choices?.[0]?.message?.content;
+        }
+        const body = await res.text().catch(() => "");
+        lastError = `vision request failed: ${res.status} model=${model} body=${body.slice(0, 220)}`;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "vision_request_error";
+        lastError = `vision request failed: timeout_or_network model=${model} detail=${msg}`;
       }
-      const body = await res.text().catch(() => "");
-      lastError = `vision request failed: ${res.status} model=${model} body=${body.slice(0, 220)}`;
     }
   }
   throw new Error(lastError);

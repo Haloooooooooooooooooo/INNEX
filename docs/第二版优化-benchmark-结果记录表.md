@@ -56,6 +56,7 @@
 - `失败`
   - 误连严重
   - 漏连严重
+  - 或关系类型超出当前 Phase4 范围
 
 ### QA
 - `通过`
@@ -90,6 +91,10 @@
 - `internalize_over_inferred`
 - `graph_missing_relation`
 - `graph_wrong_relation`
+- `graph_relation_type_out_of_scope`
+- `graph_evidence_incomplete`
+- `graph_confidence_misaligned`
+- `graph_evidence_summary_weak`
 - `qa_wrong_answer`
 - `qa_missing_evidence`
 - `qa_followup_misjudged`
@@ -125,6 +130,14 @@
   - 影响：原文纯净度与后续内化质量。
   - 处理时机：等本轮 benchmark 全样本录入测完后，统一做 URL 正文清洗与分段策略优化。
 
+- Phase4 图谱专项（新增）：
+  - 关系类型范围：仅允许 `related / supports / example_of`。
+  - 边证据完整度：每条边检查 `relation_type + confidence + evidence_summary`。
+  - 建议新增汇总指标：
+    - `relation_type_precision`
+    - `evidence_summary_usable_rate`
+    - `graph_relation_qa_reuse_rate`
+
 ---
 
 ## 单条记录模板
@@ -150,6 +163,9 @@
 - 结果：通过 / 部分通过 / 失败
 - 观察：
 - 失败原因标签：
+- 关系类型分布：related / supports / example_of
+- 证据完整度：完整边数 / 总边数
+- 证据摘要可用性：可用 / 不可用（简述原因）
 
 ### QA
 - 结果：通过 / 部分通过 / 失败

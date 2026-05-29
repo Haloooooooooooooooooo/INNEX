@@ -270,6 +270,7 @@
 - `S02 <-> S03` 应强相关
 - `S02 <-> S04` 应中等到强相关
 - `S03 <-> S04` 应中等相关
+ - 关系类型优先期望：`related / supports`（`example_of` 可选）
 
 ### 中相关组
 
@@ -280,6 +281,7 @@
 预期：
 - S08 与 S10 在 AI、评估、RAG、Prompt、产品方法论上应有弱到中相关
 - S05 与 S10 都偏产品经理/AI 产品知识，存在潜在 related
+ - 关系类型优先期望：以 `related` 为主，少量 `supports`
 
 ### 同平台能力验证组
 
@@ -290,6 +292,36 @@
 预期：
 - 三条样本主要用于验证同一类解析策略是否稳定
 - 不要求内容上互相关联
+
+---
+
+## Phase4 图谱专项评测口径（新增）
+
+### 关系类型范围验收
+- 系统只应输出并消费：
+  - `related`
+  - `supports`
+  - `example_of`
+- 若出现 `contradicts / extends / derives_from`，记为 `graph_relation_type_out_of_scope`。
+
+### 边证据完整度验收
+- 每条图谱边至少应包含：
+  - `relation_type`
+  - `confidence`
+  - `evidence_summary`（当前落在 `evidence.evidence_summary`）
+- 任一字段缺失，记为 `graph_evidence_incomplete`。
+
+### 置信度分层验收
+- 当前采用分层检查，不追求精细标定：
+  - 高：`>= 0.75`
+  - 中：`0.60 ~ 0.75`
+  - 低：`< 0.60`
+- 若分层与关系强弱明显不符，记为 `graph_confidence_misaligned`。
+
+### 建议统计指标
+- `relation_type_precision`：关系类型抽样判定准确率。
+- `evidence_summary_usable_rate`：证据摘要可读且可解释比例。
+- `graph_relation_qa_reuse_rate`：QA 中可复用图谱边比例。
 
 ---
 
@@ -347,4 +379,3 @@
   - 部分通过
   - 失败
 3. 把失败原因继续回填到过程记录文档
-

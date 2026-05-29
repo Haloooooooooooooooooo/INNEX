@@ -12,10 +12,11 @@ interface InboxTableProps {
   onAskFromItem: (item: CaptureItem) => void;
   onStatusChange: (id: string, status: CaptureItemStatus) => void;
   onInternalize: (id: string) => Promise<void>;
+  onBatchInternalize?: (ids: string[]) => Promise<void>;
   onDelete: (id: string) => void;
   onDeleteMany: (ids: string[]) => void;
   onViewOriginal: (item: CaptureItem) => void;
-  internalizingId?: string | null;
+  internalizingIds?: string[];
 }
 
 const statusConfig: Record<CaptureItemStatus, { label: string; cls: string }> = {
@@ -59,12 +60,26 @@ function formatDate(iso: string) {
   return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
 }
 
-export function InboxTable({ items, loading, onSelect, onAskFromItem, onStatusChange, onInternalize, onDelete, onDeleteMany, onViewOriginal, internalizingId = null }: InboxTableProps) {
+export function InboxTable({
+  items,
+  loading,
+  onSelect,
+  onAskFromItem,
+  onStatusChange,
+  onInternalize,
+  onBatchInternalize,
+  onDelete,
+  onDeleteMany,
+  onViewOriginal,
+  internalizingIds = [],
+}: InboxTableProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; ids: string[] } | null>(null);
   const allSelected = items.length > 0 && selectedIds.length === items.length;
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const internalizingSet = useMemo(() => new Set(internalizingIds), [internalizingIds]);
+  const isAnyInternalizing = internalizingIds.length > 0;
 
   function closeContextMenu() {
     setContextMenu(null);
@@ -85,7 +100,7 @@ export function InboxTable({ items, loading, onSelect, onAskFromItem, onStatusCh
       return;
     }
     if (action === "toPending" || action === "internalize") {
-      if (action === "internalize" && internalizingId) return;
+      if (action === "internalize" && isAnyInternalizing) return;
       setActionLoadingId(`${item.id}:${action}`);
       if (action === "toPending") {
         onStatusChange(item.id, "pending");
@@ -155,7 +170,7 @@ export function InboxTable({ items, loading, onSelect, onAskFromItem, onStatusCh
                   className="border-b border-[--border-light] last:border-b-0 hover:bg-[rgba(241,90,36,0.06)] cursor-pointer transition-colors"
                   onClick={() => onSelect(item)}
                   onContextMenu={(e) => {
-                    if (selectedIds.length > 1 && selectedSet.has(item.id)) {
+                    if (selectedIds.length >= 1 && selectedSet.has(item.id)) {
                       e.preventDefault();
                       setContextMenu({ x: e.clientX, y: e.clientY, ids: selectedIds });
                     }
@@ -197,14 +212,14 @@ export function InboxTable({ items, loading, onSelect, onAskFromItem, onStatusCh
                           onClick={() => void runAction(a.action, item)}
                           disabled={
                             a.action === "internalize"
-                              ? Boolean(internalizingId)
+                              ? Boolean(isAnyInternalizing)
                               : a.action === "delete"
-                                ? Boolean(internalizingId)
+                                ? Boolean(isAnyInternalizing)
                                 : false
                           }
                           className={`text-[10px] px-2.5 py-[3px] rounded-full border border-black/[0.14] bg-white/65 transition-colors whitespace-nowrap cursor-pointer ${a.cls}`}
                         >
-                          {a.action === "internalize" && internalizingId === item.id
+                          {a.action === "internalize" && internalizingSet.has(item.id)
                             ? "内化中..."
                             : actionLoadingId === `${item.id}:${a.action}`
                               ? "处理中..."
@@ -223,7 +238,20 @@ export function InboxTable({ items, loading, onSelect, onAskFromItem, onStatusCh
         <div className="fixed z-[900] min-w-[120px] rounded-md border border-black/15 bg-white shadow-lg py-1" style={{ left: contextMenu.x, top: contextMenu.y }}>
           <button
             type="button"
-            disabled={Boolean(internalizingId)}
+            disabled={Boolean(isAnyInternalizing) || !onBatchInternalize}
+            className="w-full text-left px-3 py-1.5 text-[12px] text-[--innex-accent] hover:bg-[rgba(241,90,36,0.08)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => {
+              const ids = [...contextMenu.ids];
+              closeContextMenu();
+              if (!ids.length || !onBatchInternalize) return;
+              void onBatchInternalize(ids);
+            }}
+          >
+            一键内化（{contextMenu.ids.length}）
+          </button>
+          <button
+            type="button"
+            disabled={Boolean(isAnyInternalizing)}
             className="w-full text-left px-3 py-1.5 text-[12px] text-red-600 hover:bg-red-50 cursor-pointer"
             onClick={() => {
               closeContextMenu();

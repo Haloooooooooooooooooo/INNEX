@@ -26,6 +26,7 @@ export function InboxPage() {
   const [selectedItem, setSelectedItem] = useState<CaptureItem | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [internalizing, setInternalizing] = useState<string | null>(null);
+  const [internalizingIds, setInternalizingIds] = useState<string[]>([]);
   const [startInternalizeForItemId, setStartInternalizeForItemId] = useState<string | null>(null);
   const [internalizeToast, setInternalizeToast] = useState<string | null>(null);
   const [deleteToast, setDeleteToast] = useState<string | null>(null);
@@ -81,7 +82,48 @@ export function InboxPage() {
     setDrawerOpen(true);
     setStartQaForItemId(null);
     setStartInternalizeForItemId(id);
+    setInternalizingIds([id]);
   }, [items]);
+
+  const handleBatchInternalize = useCallback(async (ids: string[]) => {
+    const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
+    if (!uniqueIds.length) return;
+    setInternalizingIds(uniqueIds);
+    setInternalizeToast(`已开始批量内化（${uniqueIds.length} 条）`);
+    setTimeout(() => setInternalizeToast(null), 1800);
+
+    for (const id of uniqueIds) {
+      try {
+        const res = await fetch("/api/internalize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ captureItemId: id, dryRun: false }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const msg = typeof data?.error === "string" ? data.error : "内化失败";
+          setInternalizeToast(`内化失败：${msg}`);
+          setTimeout(() => setInternalizeToast(null), 2600);
+          continue;
+        }
+        const nextSummary =
+          typeof data?.note?.summary === "string" && data.note.summary.trim()
+            ? data.note.summary.trim()
+            : undefined;
+        const nextTags = Array.isArray(data?.note?.tags) ? data.note.tags : undefined;
+        void updateItem(id, {
+          status: "crystallized",
+          ...(nextSummary ? { summary: nextSummary } : {}),
+          ...(nextTags ? { tags: nextTags } : {}),
+        });
+      } catch {
+        setInternalizeToast("批量内化请求失败，请重试。");
+        setTimeout(() => setInternalizeToast(null), 2600);
+      }
+    }
+
+    setInternalizingIds([]);
+  }, [updateItem]);
 
   const handleDelete = useCallback(async (id: string) => {
     const result = await deleteItem(id);
@@ -171,7 +213,8 @@ export function InboxPage() {
               onAskFromItem={openQaDrawer}
               onStatusChange={(id, status) => updateItem(id, { status })}
               onInternalize={handleInternalize}
-              internalizingId={internalizing}
+              onBatchInternalize={handleBatchInternalize}
+              internalizingIds={internalizingIds.length ? internalizingIds : (internalizing ? [internalizing] : [])}
               onDelete={(id) => {
                 void handleDelete(id);
               }}
@@ -200,15 +243,18 @@ export function InboxPage() {
         }}
         onDraftFlowExit={() => {
           setInternalizing(null);
+          setInternalizingIds([]);
           setStartInternalizeForItemId(null);
         }}
         onInternalizeSaved={() => {
           setInternalizing(null);
+          setInternalizingIds([]);
           setStartInternalizeForItemId(null);
         }}
         onDraftStartFailed={(message) => {
           setStartInternalizeForItemId(null);
           setInternalizing(null);
+          setInternalizingIds([]);
           setInternalizeToast(message);
           setTimeout(() => setInternalizeToast(null), 2500);
         }}
