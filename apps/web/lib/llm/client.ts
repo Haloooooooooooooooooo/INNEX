@@ -93,6 +93,42 @@ async function deepseekChatCompletion(input: {
   throw new Error("deepseek_empty_response");
 }
 
+async function genericChatCompletion(input: {
+  provider: ProviderKey;
+  model: string;
+  systemPrompt: string;
+  userPrompt: string;
+  temperature: number;
+  maxOutputTokens: number;
+}): Promise<string> {
+  const baseURL = providerBaseURL(input.provider).replace(/\/$/, "");
+  const apiKey = LLM_PROVIDERS[input.provider].apiKey;
+  const res = await fetch(`${baseURL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: input.model,
+      temperature: input.temperature,
+      max_tokens: input.maxOutputTokens,
+      messages: [
+        { role: "system", content: input.systemPrompt },
+        { role: "user", content: input.userPrompt },
+      ],
+    }),
+  });
+  if (!res.ok) {
+    const raw = await res.text().catch(() => "");
+    throw new Error(`${input.provider}_http_${res.status}:${raw.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  const text = data?.choices?.[0]?.message?.content;
+  if (typeof text === "string" && text.trim()) return text.trim();
+  throw new Error(`${input.provider}_empty_response`);
+}
+
 async function deepseekChatCompletionRobust(input: {
   model: string;
   systemPrompt: string;
@@ -139,16 +175,21 @@ export async function generateCompletion(
     model: options?.model,
   });
 
-  if (primary.provider !== "deepseek") {
-    throw new Error("non_deepseek_text_provider_disabled");
-  }
-
   try {
-    if (!hasProviderKey("deepseek")) {
-      throw new Error("deepseek api key missing");
+    if (!hasProviderKey(primary.provider)) {
+      throw new Error(`${primary.provider} api key missing`);
     }
-
-    return await deepseekChatCompletionRobust({
+    if (primary.provider === "deepseek") {
+      return await deepseekChatCompletionRobust({
+        model: primary.model,
+        systemPrompt: request.system,
+        userPrompt: request.prompt,
+        temperature: request.temperature,
+        maxOutputTokens: request.maxOutputTokens,
+      });
+    }
+    return await genericChatCompletion({
+      provider: primary.provider,
       model: primary.model,
       systemPrompt: request.system,
       userPrompt: request.prompt,

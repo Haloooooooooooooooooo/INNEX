@@ -9,6 +9,17 @@ type AddItemResult = {
   item?: CaptureItem;
 };
 
+function dedupeCaptureItems(items: CaptureItem[]) {
+  const seen = new Set<string>();
+  const deduped: CaptureItem[] = [];
+  for (const item of items) {
+    if (!item?.id || seen.has(item.id)) continue;
+    seen.add(item.id);
+    deduped.push(item);
+  }
+  return deduped;
+}
+
 export function useCaptureItems() {
   const [items, setItems] = useState<CaptureItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,7 +42,7 @@ export function useCaptureItems() {
 
     if (listRes.ok) {
       const data = await listRes.json();
-      setItems(data);
+      setItems(dedupeCaptureItems(Array.isArray(data) ? data : []));
     }
     if (countsRes.ok) {
       const data = await countsRes.json();
@@ -56,7 +67,7 @@ export function useCaptureItems() {
         const res = await fetch(`/api/capture-items/${id}`);
         if (!res.ok) continue;
         const latest = (await res.json()) as CaptureItem;
-        setItems((prev) => prev.map((x) => (x.id === id ? latest : x)));
+        setItems((prev) => dedupeCaptureItems(prev.map((x) => (x.id === id ? latest : x))));
 
         const notes = latest.parse_debug?.notes || [];
         const hasBlockingError = notes.some((n) => n.startsWith("summary_error:") || n.startsWith("tags_error:"));
@@ -129,7 +140,7 @@ export function useCaptureItems() {
         created_at: nowIso,
       })),
     };
-    setItems((prev) => [optimisticItem, ...prev]);
+    setItems((prev) => dedupeCaptureItems([optimisticItem, ...prev]));
 
     const hasFiles = (item.files || []).length > 0;
     const res = hasFiles
@@ -151,7 +162,7 @@ export function useCaptureItems() {
         });
     if (res.ok) {
       const created = (await res.json()) as CaptureItem;
-      setItems((prev) => [created, ...prev.filter((x) => x.id !== tempId)]);
+      setItems((prev) => dedupeCaptureItems([created, ...prev.filter((x) => x.id !== tempId)]));
       void hydrateItemProgressively(created.id);
       void fetchItems({ silent: true });
       return { success: true, item: created };

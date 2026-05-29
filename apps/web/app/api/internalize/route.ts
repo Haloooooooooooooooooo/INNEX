@@ -5,6 +5,7 @@ import { extractTextFromImageDataUrl, generateCompletion, generateEmbedding } fr
 import { ERROR_CODES, errorBody } from "@/lib/api/error-codes";
 import { withRetry } from "@/lib/llm/resilience";
 import { extractDocumentTextDetailed } from "@/lib/parse/document-extractor";
+import { classifyRelation } from "@/lib/graph/relation-classifier";
 import {
   INTERNALIZE_SYSTEM,
   internalizeUserPrompt,
@@ -42,6 +43,9 @@ const RELATION_MATCH_THRESHOLD = Math.max(
   Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_MATCH_THRESHOLD || 0.62))
 );
 const EXAMPLE_HINTS = ["例如", "案例", "示例", "实战", "模板", "样例", "case", "example", "template"];
+const RELATION_CONSERVATIVE_MODE = String(process.env.INTERNALIZE_RELATION_MODE || "conservative") === "conservative";
+const RELATION_LLM_MAX_CANDIDATES = Math.max(1, Math.min(40, Number(process.env.INTERNALIZE_RELATION_LLM_MAX_CANDIDATES || 16)));
+const RELATION_LLM_MIN_CONFIDENCE = Math.max(0.3, Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_LLM_MIN_CONFIDENCE || 0.56)));
 
 function isDeferredSummary(summary: string | null | undefined): boolean {
   const s = (summary || "").trim();
@@ -673,6 +677,7 @@ export async function POST(request: Request) {
             ...(Array.isArray(concepts) ? concepts : []).map((x) => String(x).trim().toLowerCase()).filter(Boolean),
           ]);
 
+          let llmClassified = 0;
           for (const match of similar as Array<{ note_id: string; similarity: number; source_chunk: number }>) {
             if (match.note_id === note.id || seenNoteIds.has(match.note_id)) continue;
             seenNoteIds.add(match.note_id);
@@ -685,7 +690,7 @@ export async function POST(request: Request) {
             ]);
             const overlap = [...sourceKeywords].filter((k) => targetKeywords.has(k)).slice(0, 3);
             const overlapCount = overlap.length;
-            const relationType = inferRelationTypeLite({
+            const liteType = inferRelationTypeLite({
               overlapCount,
               sourceTitle: note.title || "",
               sourceSummary: summary || "",
@@ -693,11 +698,52 @@ export async function POST(request: Request) {
               targetSummary: targetMeta?.summary || "",
             });
             const confidenceBase = overlapCount >= 2 ? similarity + 0.06 : similarity;
-            const confidence = Math.max(0.5, Math.min(0.98, confidenceBase));
+            const liteConfidence = Math.max(0.5, Math.min(0.98, confidenceBase));
+            let relationType: "related" | "supports" | "example_of" = liteType;
+            let confidence = liteConfidence;
+            let llmDecisionReason = "lite_fallback";
+            let llmEvidenceSummary = "";
+            if (llmClassified < RELATION_LLM_MAX_CANDIDATES) {
+              try {
+                const decision = await classifyRelation({
+                  source: {
+                    title: note.title || "",
+                    summary: summary || "",
+                    tags: generatedTags || [],
+                    concepts: concepts || [],
+                  },
+                  target: {
+                    title: targetMeta?.title || "",
+                    summary: targetMeta?.summary || "",
+                    tags: targetMeta?.tags || [],
+                    concepts: targetMeta?.concepts || [],
+                  },
+                  recall: {
+                    similarity,
+                    overlap,
+                    keywordHits: [],
+                    sourceChunk: match.source_chunk,
+                  },
+                  mode: RELATION_CONSERVATIVE_MODE ? "conservative" : "balanced",
+                });
+                llmClassified += 1;
+                llmDecisionReason = decision.decision_reason || "llm_decision";
+                llmEvidenceSummary = decision.evidence_summary || "";
+                if (decision.relation_type !== "none" && decision.confidence >= RELATION_LLM_MIN_CONFIDENCE) {
+                  relationType = decision.relation_type;
+                  confidence = Math.max(0.45, Math.min(0.99, decision.confidence));
+                } else if (RELATION_CONSERVATIVE_MODE && similarity < 0.66 && overlapCount === 0) {
+                  continue;
+                }
+              } catch {
+                // keep lite fallback
+              }
+            }
             const evidenceSummaryParts = [
               `embedding相似度=${similarity.toFixed(3)}`,
               overlapCount > 0 ? `共享概念=${overlap.join("、")}` : "共享概念不足",
               targetMeta?.summary ? `目标摘要片段=${String(targetMeta.summary).slice(0, 80)}` : "目标摘要缺失",
+              llmEvidenceSummary ? `LLM判据=${llmEvidenceSummary}` : "LLM判据=无",
             ];
             let rel: unknown = null;
             const insertPayload = {
@@ -712,6 +758,7 @@ export async function POST(request: Request) {
                 similarity,
                 overlap_count: overlapCount,
                 shared_concepts: overlap,
+                llm_decision_reason: llmDecisionReason,
                 source_chunk: match.source_chunk,
                 recall_chunk_count: embeddingRows.length,
                 match_threshold: RELATION_MATCH_THRESHOLD,

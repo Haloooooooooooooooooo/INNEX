@@ -1,5 +1,5 @@
 ﻿export type ProviderKey = "deepseek" | "openai";
-export type LlmUseCase = "parse" | "internalize" | "qa" | "general";
+export type LlmUseCase = "parse" | "internalize" | "qa" | "relation" | "general";
 
 export interface ProviderConfig {
   baseURL: string;
@@ -47,6 +47,10 @@ export const LLM_ROUTING = {
   qa: {
     provider: normalizeProvider(process.env.LLM_QA_PROVIDER, "deepseek"),
     model: process.env.LLM_QA_MODEL || "",
+  },
+  relation: {
+    provider: normalizeProvider(process.env.LLM_RELATION_PROVIDER, "deepseek"),
+    model: process.env.LLM_RELATION_MODEL || process.env.DEEPSEEK_RELATION_MODEL || "deepseek-v4-pro",
   },
   general: {
     provider: normalizeProvider(process.env.LLM_GENERAL_PROVIDER, "deepseek"),

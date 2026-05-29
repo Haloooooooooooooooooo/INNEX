@@ -426,7 +426,7 @@ export function InboxDrawer({
           <div className="flex-1 overflow-auto px-5 flex flex-col gap-4">
             {draftLoading ? (
               <div className="flex-1 min-h-[68vh] flex items-center justify-center">
-                <WaveLoader size="xl" label="内化内容生成中" />
+                <WaveLoader size="md" label="内化内容生成中" />
               </div>
             ) : (
               <>
