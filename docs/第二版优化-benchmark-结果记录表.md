@@ -431,3 +431,130 @@
 | R6-C01 | 全局边方法分布 | 证据弱 | fallback 仍高，占比 `12/19` | `innex-graph-1780126939352.json` | `graph_evidence_summary_weak` | 继续提高主链路候选命中，压降 fallback 入库比重 | 已确认待修复 |
 | R6-C02 | 多节点标签 | 可读性问题 | 标签重叠，肉眼难判断簇结构 | 图谱截图 | `graph_confidence_misaligned` | 引入标签避让/按缩放级别显示标签 | 已确认待修复 |
 | R6-C03 | 强关系类型 | 类型覆盖不足 | `supports/example_of` 为空，关系表达维度不足 | JSON 关系类型分布 | `graph_wrong_relation` | 在主链路判型中加强 supports/example_of 判定触发 | 待分析 |
+
+---
+
+## R7（2026-05-30，Phase5B QA链路截图验收）
+
+输入：
+- 验收问题 7 条（按顺序追问）
+- 证据：用户提供 QA 页面截图（16:27~16:32）
+
+核心观察：
+1. Q1（Prompt AB五步法）：
+- 命中同主题笔记，回答正确，可用。
+2. Q2（留存指标）：
+- 回答“证据不足”，且引用了不相关 Prompt skill 记录，出现召回偏题。
+3. Q3（追问控制变量）：
+- 直接“证据不足”，未复用上一轮上下文。
+4. Q4（PRD模块）：
+- 回答正确，命中较好。
+5. Q5（PRD最小模板）：
+- 误召回到“表达训练”类笔记，出现 follow-up 续问断链。
+6. Q6（意图识别评估指标）：
+- 回答正确，命中较好。
+7. Q7（与PRD是否关联）：
+- 返回“证据不足”，未给出明确“无关联”判断。
+
+判定：
+- QA状态：`部分通过`
+
+问题标签（本轮新增）：
+- `qa_followup_misjudged`
+- `qa_missing_evidence`
+
+### R7 Badcase
+
+| Case ID | 样本/边 | 问题类型 | 现象描述 | 证据（日志/JSON/截图） | 原因标签（待确认） | 修复动作（待确认） | 状态 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| R7-C01 | Q2（留存指标） | 召回偏题 | 应该沿 Prompt AB 指标类笔记扩展，却召回到不相关 Prompt skill 笔记 | 16:28 截图 | `qa_missing_evidence` | 提升“同会话主题词”权重；source阶段加标题/标签重排 | 已确认待修复 |
+| R7-C02 | Q5（PRD最小模板） | Follow-up断链 | 明确“继续上一个PRD话题”仍未复用PRD上下文 | 16:31 截图 | `qa_followup_misjudged` | 连续追问增加指代词触发（继续/上一个/刚才）强制复用上轮seed | 已确认待修复 |
+| R7-C03 | Q7（关联判断） | 拒答策略偏硬 | 应该输出“无明显关联”，却直接“不足证据” | 16:32 截图 | `qa_followup_misjudged` | 增加“关系判断问题”的兜底模板：可明确答“暂无直接关联” | 已确认待修复 |
+
+---
+
+## R8（2026-05-30，JSON正式评测）
+
+输入：
+- `innex-graph-1780144033855.json`
+
+核心指标：
+- `node_count=20`
+- `edge_count=24`
+- `relationTypeCounts`：
+  - `weak_related=21`
+  - `related=3`
+  - `supports=0`
+  - `example_of=0`
+- `confidenceStats`：
+  - `high=6`
+  - `mid=18`
+  - `low=0`
+  - `unknown=0`
+- `evidence.method`（按边明细统计）：
+  - `structured_overlap_fallback=21`
+  - `semantic_seed_llm=3`
+
+本轮结论：
+- 图谱状态：`部分通过`
+
+评价：
+1. 召回覆盖继续提升（`20/24`），主体网络更完整。
+2. 但关系类型明显失衡，弱边占比过高（`21/24`），强关系维度缺失。
+3. 主链路有恢复迹象（出现 `semantic_seed_llm`），但占比仍偏低，fallback 仍主导。
+4. 从截图看中心簇过密、标题重叠严重，可读性瓶颈转为布局问题。
+
+### R8 Badcase
+
+| Case ID | 样本/边 | 问题类型 | 现象描述 | 证据（日志/JSON/截图） | 原因标签（待确认） | 修复动作（待确认） | 状态 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| R8-C01 | 全局关系类型分布 | 类型覆盖不足 | 仅 `related/weak_related`，`supports/example_of` 缺失 | `innex-graph-1780144033855.json` | `graph_wrong_relation` | 强化关系判型约束与证据模板，提升 supports/example_of 触发 | 已确认待修复 |
+| R8-C02 | 全局边来源 | 证据弱 | fallback 仍占主导（`21/24`） | JSON `evidence.method` | `graph_evidence_summary_weak` | 继续提升 semantic_seed_llm 命中率并压降 fallback 比重 | 已确认待修复 |
+| R8-C03 | 中心簇可视化 | 可读性问题 | 节点与标题在中心区域严重重叠，难以判读关系 | 你提供的图谱截图 | `graph_confidence_misaligned` | 放大节点间距、增强斥力、提高 linkDistance（本轮已实施） | 修复中 |
+
+---
+
+## R9（2026-05-30，图谱精度收敛短闭环 — 待回填）
+
+- 版本：R8 后三件事改动版
+  - Item2：强化关系判型器 prompt（supports/example_of 结构证据约束 + 泛词降权 + 置信度分档校准），阈值未动。
+  - Item1：fallback 条件压降（仅当已有强边时 上限6->3、score>=3->>=4；无强边保持原状）。
+  - Item3：QA 无关联判定兜底（`isRelationCheckQuestion` + 兜底文案“暂无直接关联”）。
+- 构建：`apps/web` `npm run build` 通过。
+- A/B 输入：
+  - A（baseline）：R8 = `innex-graph-1780144033855.json`
+  - B（本轮）：__待回填 graph JSON 文件名__
+- 复测口径要求（必须同样本、同 7 题，不换题不换样本）：
+
+### 图谱侧（重内化同样本后导出 JSON 回填）
+- `node_count` / `edge_count`：__待填__
+- `relationTypeCounts`（含 weak_related/fallback）：__待填__
+  - 重点看：`supports/example_of` 是否从 0 出现；`weak_related` 占比是否下降。
+- `confidenceStats`（high/mid/low）：__待填__
+- `evidence.method` 占比：`semantic_seed_llm` / `embedding_similarity_plus_overlap` / `structured_overlap_fallback`：__待填__
+  - 目标线：`semantic_seed_llm + embedding` 占比上升；`fallback / final_relations_count < 0.60`。
+- 内化日志关键字段（每条笔记）：`strong_edge_count`、`fallback_compressed`、`llm_classified_count`、`fallback_edges_count`：__待填__
+
+### QA 侧（同一套 7 题复测，重点 R7 三个 badcase）
+- Q1（Prompt AB五步法）：__待填__
+- Q2（留存指标，R7-C01 偏题）：__待填__（本轮重点验证：主题重排后是否仍召回到不相关 Prompt skill 笔记）
+- Q3（追问控制变量，R7-C02 断链）：__待填__（本轮重点验证：续问指代是否复用上轮上下文）
+- Q4（PRD模块）：__待填__
+- Q5（PRD最小模板，R7-C02 断链）：__待填__（本轮重点验证：是否复用 PRD 上下文，Stage 3.7 followup_reuse 是否命中）
+- Q6（意图识别评估指标）：__待填__
+- Q7（与PRD是否关联，R7-C03 拒答过硬）：__待填__（本轮重点验证：是否输出“暂无直接关联”而非“证据不足”）
+
+观测建议：复测时查 `retrieval_stage`（是否出现 `followup_reuse`）与 `graph_expand.followup_reference / followup_reuse_applied` 字段。
+
+### R9 Badcase（复测后回填）
+
+| Case ID | 样本/边 | 问题类型 | 现象描述 | 证据（日志/JSON/截图） | 原因标签（待确认） | 修复动作（待确认） | 状态 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| R9-C01 |  |  |  |  |  |  | 待回填 |
+
+### R8 -> R9 关闭/新增（复测后回填）
+- R8-C01（supports/example_of 缺失）：用户确认主因是 benchmark 样本本身这两类少，非 bug，本轮不再改图谱；关注 R9 是否仍可读。
+- R8-C02（fallback 主导）：__待确认是否关闭（看 R9 fallback 占比）__
+- R7-C01（Q2 召回偏题）：本轮已加同会话主题重排，__待 R9-QA 确认关闭__
+- R7-C02（Q3/Q5 follow-up 断链）：本轮已加续问指代复用 + Stage 3.7 直接复用，__待 R9-QA 确认关闭__
+- R7-C03（Q7 拒答过硬）：上一轮已加无关联兜底，__待 R9-QA 确认关闭__

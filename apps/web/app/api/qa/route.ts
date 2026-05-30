@@ -5,12 +5,238 @@ import { generateCompletion, generateEmbedding } from "@/lib/llm/client";
 import { RAG_QA_SYSTEM, ragQaUserPrompt } from "@/lib/llm/prompts";
 import { ERROR_CODES, errorBody } from "@/lib/api/error-codes";
 import { withRetry } from "@/lib/llm/resilience";
-import { detectIntent, intentLabel } from "@/lib/qa/intent";
+import { detectIntent, intentLabel, isRelationCheckQuestion, detectExpansionIntent } from "@/lib/qa/intent";
+import type { QaExpansionIntent } from "@/lib/qa/intent";
 import { retrieveOnlineEvidence } from "@/lib/qa/online";
 import { onlineMaxEvidence, qaContextRounds, retrievalPreset } from "@/lib/qa/config";
 import { hasFilters, parseQuestionFilters } from "@/lib/qa/filters";
 
 type QaMode = "notes" | "general" | "online";
+type RelationType = "related" | "supports" | "example_of" | "weak_related" | "fallback";
+
+function graphExpandBudget() {
+  return Math.max(4, Math.min(40, Number(process.env.QA_GRAPH_EXPAND_BUDGET || 14)));
+}
+
+function graphExpandHops() {
+  return Math.max(1, Math.min(3, Number(process.env.QA_GRAPH_EXPAND_HOPS || 1)));
+}
+
+function graphExpandMinGain() {
+  return Math.max(1, Math.min(6, Number(process.env.QA_GRAPH_EXPAND_MIN_GAIN || 1)));
+}
+
+function relationPriorityByIntent(intent: string): RelationType[] {
+  if (intent === "action_advice") return ["supports", "related", "example_of", "weak_related", "fallback"];
+  if (intent === "comparison") return ["supports", "related", "example_of", "weak_related", "fallback"];
+  if (intent === "summary") return ["related", "supports", "example_of", "weak_related", "fallback"];
+  if (intent === "retrospective") return ["supports", "related", "example_of", "weak_related", "fallback"];
+  return ["related", "supports", "example_of", "weak_related", "fallback"];
+}
+
+// Phase 5.5: expansion intent maps directly to a preferred relation type for graph
+// expansion. When an expansion intent is present it takes precedence over the
+// primary-intent priority (the preferred type is moved to the front; the rest keep
+// their relative order). "none" falls back to relationPriorityByIntent.
+function relationPriorityByExpansion(
+  expansionIntent: QaExpansionIntent,
+  primaryIntent: string
+): RelationType[] {
+  const base = relationPriorityByIntent(primaryIntent);
+  const preferred: RelationType | null =
+    expansionIntent === "evidence_strengthening"
+      ? "supports"
+      : expansionIntent === "example_request"
+      ? "example_of"
+      : expansionIntent === "related_topic_expansion"
+      ? "related"
+      : null;
+  if (!preferred) return base;
+  return [preferred, ...base.filter((t) => t !== preferred)];
+}
+
+function looksLikeUuid(input: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input);
+}
+
+function isSemanticallyContinuous(question: string, previousUserQuestion?: string | null): boolean {
+  if (!previousUserQuestion?.trim()) return false;
+  const a = new Set(extractQueryTerms(question).map((x) => x.toLowerCase()));
+  const b = new Set(extractQueryTerms(previousUserQuestion).map((x) => x.toLowerCase()));
+  if (!a.size || !b.size) return false;
+  let overlap = 0;
+  for (const t of a) {
+    if (b.has(t)) overlap += 1;
+  }
+  return overlap >= 1;
+}
+
+// R7-C02: explicit follow-up / anaphora reference. Continuation questions like
+// "继续上一个话题" or "再展开说说" may share no terms with the previous question,
+// so term-overlap continuity misses them. When these markers appear, we force-reuse
+// the previous round's cited notes as graph seeds.
+const FOLLOWUP_REFERENCE_MARKERS = [
+  "继续", "接着", "上一个", "上个", "上面", "上述", "刚才", "刚刚", "之前", "前面",
+  "那个", "这个", "再讲", "再说", "展开", "详细说", "具体说", "顺着", "延续",
+];
+function isFollowupReference(question: string): boolean {
+  const q = (question || "").trim().toLowerCase();
+  if (!q) return false;
+  return FOLLOWUP_REFERENCE_MARKERS.some((m) => q.includes(m.toLowerCase()));
+}
+
+// R7-C01: collect topic terms from the current question plus the most recent
+// user questions in the session, so retrieval can re-rank toward the on-going topic.
+function buildSessionTopicTerms(
+  question: string,
+  history: Array<{ role: string; content: string }>,
+  maxPrevUserTurns = 2
+): Set<string> {
+  const terms = new Set<string>(extractQueryTerms(question).map((x) => x.toLowerCase()));
+  const prevUserQuestions = [...(history || [])]
+    .filter((m) => m.role === "user" && m.content && m.content !== question)
+    .slice(-maxPrevUserTurns);
+  for (const m of prevUserQuestions) {
+    for (const t of extractQueryTerms(m.content)) terms.add(t.toLowerCase());
+  }
+  return terms;
+}
+
+// R7-C01: gently lift on-topic chunks above marginally-higher off-topic ones.
+// Adds a bounded topic bonus to similarity for ranking only (does not mutate stored similarity).
+function reorderChunksBySessionTopic<
+  T extends { content: string; note_title: string; similarity: number }
+>(chunks: T[], topicTerms: Set<string>): T[] {
+  if (!chunks.length || !topicTerms.size) return chunks;
+  const scoreOf = (c: T) => {
+    const blob = `${c.note_title || ""}\n${c.content || ""}`.toLowerCase();
+    let hits = 0;
+    for (const t of topicTerms) {
+      if (t.length >= 2 && blob.includes(t)) hits += 1;
+    }
+    const titleBlob = (c.note_title || "").toLowerCase();
+    let titleHits = 0;
+    for (const t of topicTerms) {
+      if (t.length >= 2 && titleBlob.includes(t)) titleHits += 1;
+    }
+    const bonus = Math.min(0.15, hits * 0.04 + titleHits * 0.03);
+    return Number(c.similarity || 0) + bonus;
+  };
+  return [...chunks]
+    .map((c, i) => ({ c, i, s: scoreOf(c) }))
+    .sort((a, b) => (b.s - a.s) || (a.i - b.i))
+    .map((x) => x.c);
+}
+
+
+async function expandNoteIdsByGraph(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  seedNoteIds: string[],
+  relationPriority: RelationType[],
+  budget: number,
+  hops: number
+): Promise<{ noteIds: string[]; gain: number; stopReason: string; traversedEdges: number }> {
+  if (!seedNoteIds.length) return { noteIds: [], gain: 0, stopReason: "no_seed", traversedEdges: 0 };
+  const visited = new Set<string>(seedNoteIds);
+  let frontier = [...seedNoteIds];
+  let traversedEdges = 0;
+  const allowed = new Set(relationPriority);
+  const typeRank = new Map(relationPriority.map((t, i) => [t, i]));
+
+  for (let hop = 0; hop < hops; hop += 1) {
+    if (!frontier.length) return { noteIds: [...visited], gain: visited.size - seedNoteIds.length, stopReason: "frontier_exhausted", traversedEdges };
+    if (visited.size - seedNoteIds.length >= budget) return { noteIds: [...visited], gain: visited.size - seedNoteIds.length, stopReason: "budget_reached", traversedEdges };
+
+    const { data: relRows, error } = await supabase
+      .from("note_relations")
+      .select("source_note_id, target_note_id, relation_type")
+      .eq("user_id", userId)
+      .or(`source_note_id.in.(${frontier.join(",")}),target_note_id.in.(${frontier.join(",")})`)
+      .limit(500);
+    if (error || !relRows?.length) {
+      return { noteIds: [...visited], gain: visited.size - seedNoteIds.length, stopReason: "no_relations", traversedEdges };
+    }
+
+    const typed = relRows
+      .filter((r) => allowed.has(r.relation_type as RelationType))
+      .sort((a, b) => (typeRank.get(a.relation_type as RelationType) ?? 99) - (typeRank.get(b.relation_type as RelationType) ?? 99));
+    traversedEdges += typed.length;
+    const next: string[] = [];
+
+    for (const r of typed) {
+      const peers = [r.source_note_id, r.target_note_id].filter(Boolean);
+      for (const id of peers) {
+        if (visited.has(id)) continue;
+        visited.add(id);
+        next.push(id);
+        if (visited.size - seedNoteIds.length >= budget) {
+          return { noteIds: [...visited], gain: visited.size - seedNoteIds.length, stopReason: "budget_reached", traversedEdges };
+        }
+      }
+    }
+    frontier = next;
+  }
+  return { noteIds: [...visited], gain: visited.size - seedNoteIds.length, stopReason: "hop_limit", traversedEdges };
+}
+
+async function retrieveFromSourceChunks(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  questionEmbedding: number[],
+  threshold: number,
+  topK: number
+) {
+  const { data, error } = await supabase.rpc("match_source_chunks", {
+    query_embedding: questionEmbedding,
+    p_user_id: userId,
+    match_threshold: threshold,
+    match_count: topK,
+  });
+  if (error || !data?.length) return [] as Array<{
+    id: string;
+    note_id: string;
+    chunk_index: number;
+    content: string;
+    note_title: string;
+    similarity: number;
+  }>;
+
+  const itemIds = Array.from(new Set((data as Array<{ capture_item_id: string }>).map((r) => r.capture_item_id).filter(Boolean)));
+  const { data: notes } = await supabase
+    .from("notes")
+    .select("id, title, capture_item_id")
+    .eq("user_id", userId)
+    .in("capture_item_id", itemIds);
+
+  const byCaptureItem = new Map<string, { id: string; title: string }>();
+  for (const n of notes || []) {
+    if (n.capture_item_id && !byCaptureItem.has(n.capture_item_id)) {
+      byCaptureItem.set(n.capture_item_id, { id: n.id, title: n.title || "未命名笔记" });
+    }
+  }
+
+  return (data as Array<{
+    id: string;
+    capture_item_id: string;
+    chunk_index: number;
+    content: string;
+    similarity: number;
+    source_type?: string;
+  }>)
+    .map((r) => {
+      const mapped = byCaptureItem.get(r.capture_item_id);
+      return {
+        id: r.id,
+        note_id: mapped?.id || `source-${r.capture_item_id}`,
+        chunk_index: r.chunk_index ?? 0,
+        content: r.content || "",
+        note_title: mapped?.title || `原文片段（${r.source_type || "source"}）`,
+        similarity: Number(r.similarity || 0.55),
+      };
+    })
+    .filter((r) => r.content.trim().length > 0);
+}
 
 function parseMode(rawQuestion: string): { mode: QaMode; question: string } {
   const q = rawQuestion.trim();
@@ -33,14 +259,28 @@ function buildHistoryContext(messages: Array<{ role: string; content: string }>)
   return `\n\n最近对话上下文（供参考）：\n${history}`;
 }
 
-function buildStructuredInstruction(intentText: string): string {
+function buildStructuredInstruction(
+  intentText: string,
+  isRelationCheck = false,
+  answerStrategy: "answerable" | "partial" | "insufficient" = "answerable"
+): string {
+  const relationClause = isRelationCheck
+    ? `\n\n注意：本问题是“是否关联/是否相关”类判断。若证据显示两者没有明显关联，请明确回答“暂无直接关联”，并简述判断依据，不要笼统地说“证据不足”。`
+    : "";
+  // Phase 5.6: answer strategy steers how strongly the model commits.
+  const strategyClause =
+    answerStrategy === "partial"
+      ? `\n\n作答策略：证据中等。请先给出当前最稳妥的判断，再用“不确定项”明确指出证据边界与缺口，不要假装证据充分。`
+      : answerStrategy === "insufficient"
+      ? `\n\n作答策略：证据较弱。请只给出能被证据支撑的有限结论，并明确说明哪些部分证据不足、无法可靠回答。`
+      : "";
   return `请严格按以下结构输出，并保持简洁可执行。
 1) 结论
 2) 依据（仅使用给定证据，不要臆测）
 3) 可执行下一步（1-3条）
 4) 不确定项（若证据不足必须明确说明）
 
-当前意图类型：${intentText}`;
+当前意图类型：${intentText}${relationClause}${strategyClause}`;
 }
 
 function calcEvidence(chunks: Array<{ similarity: number }>): { score: number; level: "high" | "low" | "unknown" } {
@@ -51,6 +291,20 @@ function calcEvidence(chunks: Array<{ similarity: number }>): { score: number; l
   if (avg >= 0.78) return { score: avg, level: "high" };
   if (avg >= 0.65) return { score: avg, level: "low" };
   return { score: avg, level: "unknown" };
+}
+
+// Phase 5.6: explicit three-tier answer strategy from evidence + recall breadth.
+// answerable: enough evidence to answer directly.
+// partial: some on-topic evidence but weak/sparse -> answer with stated boundaries.
+// insufficient: too little to answer reliably.
+function deriveAnswerStrategy(
+  level: "high" | "low" | "unknown",
+  chunkCount: number
+): "answerable" | "partial" | "insufficient" {
+  if (level === "high") return "answerable";
+  if (level === "low") return chunkCount >= 2 ? "partial" : "insufficient";
+  // unknown
+  return chunkCount >= 3 ? "partial" : "insufficient";
 }
 
 function extractQueryTerms(question: string): string[] {
@@ -209,6 +463,8 @@ export async function POST(request: Request) {
   const intentResult = detectIntent(question);
   const intent = intentResult.intent;
   const intentText = intentLabel(intent);
+  const relationCheck = isRelationCheckQuestion(question);
+  const expansionIntent = detectExpansionIntent(question);
   const defaultRetrieval = retrievalPreset(intent);
   const topK = typeof body.topK === "number" ? body.topK : defaultRetrieval.topK;
   const threshold = typeof body.threshold === "number" ? body.threshold : defaultRetrieval.threshold;
@@ -270,7 +526,7 @@ export async function POST(request: Request) {
 
     const { data: historyRows } = await supabase
       .from("qa_messages")
-      .select("role, content")
+      .select("role, content, citations")
       .eq("user_id", user.id)
       .eq("session_id", effectiveSessionId)
       .order("created_at", { ascending: true })
@@ -288,26 +544,30 @@ export async function POST(request: Request) {
     }> = [];
     let evidenceLevel: "high" | "low" | "unknown" = "unknown";
     let evidenceScore = 0;
+    let answerStrategy: "answerable" | "partial" | "insufficient" = "insufficient";
     let retrievalStage = "none";
+    let graphExpandMeta: Record<string, unknown> | null = null;
 
     if (mode === "general") {
       answer = await withRetry(
         () =>
           generateCompletion(
             RAG_QA_SYSTEM,
-            `${buildStructuredInstruction(intentText)}\n\n问题：${question}${buildHistoryContext(historyRows || [])}`,
+            `${buildStructuredInstruction(intentText, relationCheck)}\n\n问题：${question}${buildHistoryContext(historyRows || [])}`,
             { useCase: "qa" }
           ),
         { attempts: 2, timeoutMs: 30000 }
       );
       evidenceLevel = "low";
       evidenceScore = 0.5;
+      answerStrategy = "partial";
     } else if (mode === "online") {
       const webItems = await retrieveOnlineEvidence(question, onlineMaxEvidence());
       if (!webItems.length) {
         answer = "未检索到可用的网页证据，请换个关键词或稍后再试。";
         evidenceLevel = "unknown";
         evidenceScore = 0;
+        answerStrategy = "insufficient";
       } else {
         const webContext = webItems
           .map((w, i) => `[Web ${i + 1}] ${w.title}\nURL: ${w.url}\n内容: ${w.snippet}`)
@@ -316,7 +576,7 @@ export async function POST(request: Request) {
           () =>
             generateCompletion(
               RAG_QA_SYSTEM,
-              `${buildStructuredInstruction(intentText)}\n\n问题：${question}${buildHistoryContext(
+              `${buildStructuredInstruction(intentText, relationCheck)}\n\n问题：${question}${buildHistoryContext(
                 historyRows || []
               )}\n\n网页证据：\n${webContext}`,
               { useCase: "qa" }
@@ -334,6 +594,7 @@ export async function POST(request: Request) {
         }));
         evidenceLevel = "low";
         evidenceScore = 0.58;
+        answerStrategy = "partial";
       }
     } else {
       const questionEmbedding = await withRetry(() => generateEmbedding(question), {
@@ -424,6 +685,33 @@ export async function POST(request: Request) {
         });
       }
 
+      // Stage 3.5: source chunk fallback (original content retrieval), before graph expansion.
+      if (!chunks.length && !hasFilters(filters)) {
+        try {
+          const sourceThreshold = Math.max(0.52, threshold - 0.1);
+          const sourceTopK = Math.max(topK, 10);
+          const sourceRows = await retrieveFromSourceChunks(
+            supabase,
+            user.id,
+            questionEmbedding,
+            sourceThreshold,
+            sourceTopK
+          );
+          if (sourceRows.length) {
+            chunks = sourceRows;
+            retrievalStage = "source_vector";
+            console.info("[qa] source_vector_hit", {
+              trace_id: traceId,
+              user_id: user.id,
+              chunk_count: chunks.length,
+              source_threshold: sourceThreshold,
+            });
+          }
+        } catch (sourceErr) {
+          console.warn("[qa] source_vector_failed", { trace_id: traceId, error: String(sourceErr) });
+        }
+      }
+
       // Adaptive fallback: if no result on strict retrieval, retry with relaxed threshold.
       if (!chunks.length && !hasFilters(filters)) {
         try {
@@ -466,6 +754,137 @@ export async function POST(request: Request) {
         }
       }
 
+      // Stage 3.7: follow-up reuse (R7-C02). When the question is an explicit follow-up
+      // reference ("继续/上一个/刚才/展开"...), reuse the previous round's cited notes directly,
+      // independent of sparsity. This rescues cases where the current question confidently
+      // mis-recalled to off-topic notes instead of staying on the previous topic.
+      let followupReuse = false;
+      if (!hasFilters(filters) && isFollowupReference(question)) {
+        try {
+          const prevCitations = [...(historyRows || [])]
+            .reverse()
+            .find((m) => m.role === "assistant" && Array.isArray(m.citations))?.citations as
+            | Array<{ note_id?: string; source?: string }>
+            | undefined;
+          const prevNoteIds = Array.from(
+            new Set(
+              (prevCitations || [])
+                .filter((c) => c?.source === "knowledge" && c?.note_id && looksLikeUuid(c.note_id))
+                .map((c) => c.note_id as string)
+            )
+          ).slice(0, 6);
+          if (prevNoteIds.length) {
+            const reuseTopK = Math.max(topK, 10);
+            const reuseThreshold = Math.max(0.48, threshold - 0.12);
+            const { data: reuseData, error: reuseErr } = await supabase.rpc("match_note_chunks_in_notes", {
+              query_embedding: questionEmbedding,
+              p_user_id: user.id,
+              p_note_ids: prevNoteIds,
+              match_threshold: reuseThreshold,
+              match_count: reuseTopK,
+            });
+            if (!reuseErr && reuseData?.length) {
+              const merged = fuseChunks([...(chunks || []), ...reuseData]);
+              if (merged.length >= (chunks?.length || 0)) {
+                chunks = merged;
+                followupReuse = true;
+                retrievalStage = retrievalStage === "none" ? "followup_reuse" : `${retrievalStage}+followup_reuse`;
+                console.info("[qa] followup_reuse_hit", {
+                  trace_id: traceId,
+                  user_id: user.id,
+                  reused_note_count: prevNoteIds.length,
+                  reuse_chunk_count: reuseData.length,
+                });
+              }
+            }
+          }
+        } catch (reuseErr) {
+          console.warn("[qa] followup_reuse_failed", { trace_id: traceId, error: String(reuseErr) });
+        }
+      }
+
+      // Stage 4: graph-guided expansion retrieval (Phase 5B)
+      // Trigger only in notes mode without manual filters and when current evidence is sparse.
+      if (!hasFilters(filters) && (chunks.length < Math.max(4, Math.floor(topK * 0.8)))) {
+        try {
+          const seedNoteIds = Array.from(new Set(chunks.map((c) => c.note_id).filter(looksLikeUuid))).slice(0, 10);
+          const previousUserQuestion = [...(historyRows || [])]
+            .reverse()
+            .find((m) => m.role === "user" && m.content !== question)?.content;
+          const semanticallyContinuous = isSemanticallyContinuous(question, previousUserQuestion);
+          // R7-C02: explicit follow-up reference ("继续/上一个/刚才/展开"...) forces seed reuse
+          // even when the new question shares no terms with the previous one.
+          const followupReference = isFollowupReference(question);
+          const reusePreviousContext = semanticallyContinuous || followupReference;
+          const previousAssistantCitations = [...(historyRows || [])]
+            .reverse()
+            .find((m) => m.role === "assistant" && Array.isArray(m.citations))?.citations as
+            | Array<{ note_id?: string; source?: string }>
+            | undefined;
+          const previousNoteIds = reusePreviousContext
+            ? Array.from(
+                new Set(
+                  (previousAssistantCitations || [])
+                    .filter((c) => c?.source === "knowledge" && c?.note_id && looksLikeUuid(c.note_id))
+                    .map((c) => c.note_id as string)
+                )
+              ).slice(0, 6)
+            : [];
+          const mergedSeedIds = Array.from(new Set([...seedNoteIds, ...previousNoteIds])).slice(0, 12);
+          const relationPriority = relationPriorityByExpansion(expansionIntent, intent);
+          const expand = await expandNoteIdsByGraph(
+            supabase,
+            user.id,
+            mergedSeedIds,
+            relationPriority,
+            graphExpandBudget(),
+            graphExpandHops()
+          );
+          const gain = Number(expand.gain || 0);
+          graphExpandMeta = {
+            seed_count: seedNoteIds.length,
+            reused_seed_count: previousNoteIds.length,
+            semantically_continuous: semanticallyContinuous,
+            followup_reference: followupReference,
+            followup_reuse_applied: followupReuse,
+            expansion_intent: expansionIntent,
+            expanded_count: expand.noteIds.length,
+            gain,
+            traversed_edges: expand.traversedEdges,
+            stop_reason: expand.stopReason,
+            relation_priority: relationPriority,
+          };
+
+          if (gain >= graphExpandMinGain() && expand.noteIds.length > 0) {
+            const scopedTopK = Math.max(topK, 12);
+            const scopedThreshold = Math.max(0.5, threshold - 0.08);
+            const { data: expandedData, error: expandedErr } = await supabase.rpc("match_note_chunks_in_notes", {
+              query_embedding: questionEmbedding,
+              p_user_id: user.id,
+              p_note_ids: expand.noteIds,
+              match_threshold: scopedThreshold,
+              match_count: scopedTopK,
+            });
+            if (!expandedErr && expandedData?.length) {
+              const merged = fuseChunks([...(chunks || []), ...expandedData]);
+              if (merged.length > (chunks?.length || 0)) {
+                chunks = merged;
+                retrievalStage = "graph_expanded_vector";
+              }
+            }
+          } else {
+            retrievalStage = `${retrievalStage}+graph_skip`;
+          }
+          console.info("[qa] graph_expand", {
+            trace_id: traceId,
+            user_id: user.id,
+            ...graphExpandMeta,
+          });
+        } catch (expandErr) {
+          console.warn("[qa] graph_expand_failed", { trace_id: traceId, error: String(expandErr) });
+        }
+      }
+
       if (hasFilters(filters) && chunks.length > 0) {
         const uniqueNoteIds = Array.from(new Set(chunks.map((c) => c.note_id)));
         const { data: noteRows } = await supabase
@@ -495,7 +914,9 @@ export async function POST(request: Request) {
       }
 
       if (!chunks.length) {
-        const uncertainAnswer = "当前知识库中没有足够证据支持回答该问题。请先内化更多相关笔记后再试。";
+        const uncertainAnswer = relationCheck
+          ? "根据当前知识库中的笔记，暂未发现两者之间的直接关联。若你认为它们应当相关，可补充内化更多相关笔记后再问。"
+          : "当前知识库中没有足够证据支持回答该问题。请先内化更多相关笔记后再试。";
         let answerId: string | null = null;
         try {
           const { data: record } = await supabase
@@ -538,7 +959,11 @@ export async function POST(request: Request) {
       }
 
       const fusedChunks = fuseChunks(chunks);
-      const formattedChunks = fusedChunks.map((c, i) => ({
+      // R7-C01: re-rank fused chunks toward the on-going session topic, so a marginally
+      // higher-similarity off-topic note does not outrank on-topic evidence.
+      const sessionTopicTerms = buildSessionTopicTerms(question, historyRows || []);
+      const rankedChunks = reorderChunksBySessionTopic(fusedChunks, sessionTopicTerms);
+      const formattedChunks = rankedChunks.map((c, i) => ({
         index: i + 1,
         content: c.content,
         title: c.note_title || "未命名笔记",
@@ -546,11 +971,18 @@ export async function POST(request: Request) {
         chunk_index: c.chunk_index,
       }));
 
+      // Phase 5.6: derive evidence + answer strategy before generating, so partial/
+      // insufficient cases instruct the model to answer with explicit boundaries.
+      const ev = calcEvidence(fusedChunks);
+      evidenceLevel = ev.level;
+      evidenceScore = ev.score;
+      answerStrategy = deriveAnswerStrategy(ev.level, formattedChunks.length);
+
       answer = await withRetry(
         () =>
           generateCompletion(
             RAG_QA_SYSTEM,
-            `${buildStructuredInstruction(intentText)}\n\n${ragQaUserPrompt(
+            `${buildStructuredInstruction(intentText, relationCheck, answerStrategy)}\n\n${ragQaUserPrompt(
               `${question}${buildHistoryContext(historyRows || [])}`,
               formattedChunks
             )}`,
@@ -568,9 +1000,6 @@ export async function POST(request: Request) {
         excerpt: `${c.content.substring(0, 200)}...`,
         source: "knowledge",
       }));
-      const ev = calcEvidence(fusedChunks);
-      evidenceLevel = ev.level;
-      evidenceScore = ev.score;
 
     }
 
@@ -603,7 +1032,7 @@ export async function POST(request: Request) {
 
     await supabase.from("qa_sessions").update({ updated_at: new Date().toISOString() }).eq("id", effectiveSessionId).eq("user_id", user.id);
 
-    console.info("[qa] success", { trace_id: traceId, user_id: user.id, session_id: effectiveSessionId, mode, citation_count: citations.length });
+    console.info("[qa] success", { trace_id: traceId, user_id: user.id, session_id: effectiveSessionId, mode, citation_count: citations.length, answer_strategy: answerStrategy, intent_expansion: expansionIntent });
     return NextResponse.json({
       answer,
       citations,
@@ -615,12 +1044,15 @@ export async function POST(request: Request) {
       intentConfidence: intentResult.confidence,
       evidence_level: evidenceLevel,
       evidence_score: evidenceScore,
+      answer_strategy: answerStrategy,
+      intent_expansion: expansionIntent,
       evidence_items: citations.map((c) => ({ note_id: c.note_id, title: c.title, chunk_index: c.chunk_index })),
       uncertainties: [
         ...(evidenceLevel === "high" ? [] : ["证据强度较低，请谨慎采纳结论。建议补充同主题笔记或提高问题具体度。"]),
       ],
       retrieval: { topK, threshold },
       retrieval_stage: retrievalStage,
+      graph_expand: graphExpandMeta,
       filters,
     });
   } catch (err: unknown) {

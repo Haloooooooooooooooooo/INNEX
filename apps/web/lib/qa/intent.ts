@@ -42,3 +42,46 @@ export function intentLabel(intent: QaIntent): string {
   }
 }
 
+// Detects "is X related to Y" style questions. These should be allowed to answer
+// "暂无直接关联" (no direct relation found) instead of the generic "证据不足" refusal.
+// Requires BOTH a relation word AND a yes/no judgement marker, so action questions
+// like "怎么建立关联" do not match.
+export function isRelationCheckQuestion(question: string): boolean {
+  const q = (question || "").trim().toLowerCase();
+  if (!q) return false;
+  const relationWords = ["关联", "关系", "联系", "相关", "有关"];
+  const judgementMarkers = ["是否", "有没有", "有无", "是不是", "存在", "吗", "么", "?", "？"];
+  const hasRelation = relationWords.some((w) => q.includes(w));
+  if (!hasRelation) return false;
+  return judgementMarkers.some((m) => q.includes(m));
+}
+
+// Phase 5.3: expansion intent — orthogonal to the primary QaIntent. It expresses
+// what *kind* of graph expansion would help, and maps directly to a preferred
+// relation type for graph-guided retrieval (Phase 5.5). "none" means no specific
+// expansion preference (fall back to primary-intent priority).
+export type QaExpansionIntent =
+  | "evidence_strengthening"
+  | "example_request"
+  | "related_topic_expansion"
+  | "none";
+
+export function detectExpansionIntent(question: string): QaExpansionIntent {
+  const q = (question || "").trim().toLowerCase();
+  if (!q) return "none";
+
+  // example / case request -> example_of
+  const exampleMarkers = ["例子", "案例", "举例", "示例", "实例", "模板", "样例", "demo", "example", "case", "怎么用", "用法"];
+  // evidence strengthening -> supports
+  const evidenceMarkers = ["依据", "证据", "为什么", "原因", "凭什么", "支撑", "论据", "数据", "证明", "理由", "怎么证明", "可靠吗"];
+  // related-topic expansion -> related
+  const relatedMarkers = ["相关", "关联", "类似", "还有什么", "其他", "延伸", "拓展", "扩展", "周边", "相近", "相似主题"];
+
+  // example/evidence are more specific than related; check them first.
+  if (exampleMarkers.some((m) => q.includes(m))) return "example_request";
+  if (evidenceMarkers.some((m) => q.includes(m))) return "evidence_strengthening";
+  if (relatedMarkers.some((m) => q.includes(m))) return "related_topic_expansion";
+  return "none";
+}
+
+

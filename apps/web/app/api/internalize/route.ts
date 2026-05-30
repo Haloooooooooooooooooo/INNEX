@@ -794,6 +794,8 @@ export async function POST(request: Request) {
       let embeddingOrLlmEdgesCount = 0;
       let semanticSeedCandidates = 0;
       let semanticSeedEdgesCount = 0;
+      let strongEdgeCount = 0;
+      let fallbackCompressed = false;
       const userDynamicLexicon = await buildUserDynamicLexicon(supabase, user.id, note.id);
       const chunkEmbeddings = await supabase
         .from("note_chunks")
@@ -1161,6 +1163,18 @@ export async function POST(request: Request) {
       // This helps construct a broader knowledge network while keeping confidence layered.
       if (createdCount < MAX_RELATIONS_PER_NOTE) {
         fallbackUsed = true;
+        // Conditional compression: only tighten fallback when this note already has
+        // strong edges (related/supports/example_of). When there are no strong edges,
+        // keep the looser fallback so the graph does not collapse to "node with no edge".
+        const STRONG_TYPES = new Set(["related", "supports", "example_of"]);
+        strongEdgeCount = (relations as Array<{ relation_type?: string }>).filter((r) =>
+          STRONG_TYPES.has(String(r?.relation_type || ""))
+        ).length;
+        fallbackCompressed = strongEdgeCount > 0;
+        const fallbackMinScore = fallbackCompressed ? 4 : 3;
+        const fallbackCap = fallbackCompressed
+          ? Math.max(0, Math.min(3, MAX_FALLBACK_RELATIONS_PER_NOTE))
+          : MAX_FALLBACK_RELATIONS_PER_NOTE;
         const existingTargets = new Set<string>();
         for (const r of relations as Array<{ target_note_id?: string }>) {
           if (r?.target_note_id) existingTargets.add(r.target_note_id);
@@ -1200,14 +1214,14 @@ export async function POST(request: Request) {
             const score = sharedStructured.length * 2 + keywordHits.length;
             return { row, score, sharedStructured, keywordHits };
           })
-          .filter((x) => x.score >= 3)
+          .filter((x) => x.score >= fallbackMinScore)
           .sort((a, b) => b.score - a.score)
           .slice(0, MAX_RELATIONS_PER_NOTE);
 
         const fallbackBudget = Math.max(
           0,
           Math.min(
-            MAX_FALLBACK_RELATIONS_PER_NOTE,
+            fallbackCap,
             MAX_RELATIONS_PER_NOTE - createdCount
           )
         );
@@ -1282,6 +1296,8 @@ export async function POST(request: Request) {
         llm_max_candidates: RELATION_LLM_MAX_CANDIDATES,
         embedding_or_llm_edges_count: embeddingOrLlmEdgesCount,
         fallback_edges_count: fallbackEdgesCount,
+        strong_edge_count: strongEdgeCount,
+        fallback_compressed: fallbackCompressed,
         fallback_used: fallbackUsed,
         final_relations_count: createdCount,
       });

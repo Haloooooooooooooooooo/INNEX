@@ -72,6 +72,24 @@ const CLUSTER_COLOR_FAMILIES = [
   { strong: "#7C4DFF", midStrong: "#9575FF", mid: "#A98EFF", weak: "#C0A8FF" },
   // ❤️ coral
   { strong: "#FF5A5F", midStrong: "#FF7276", mid: "#FF8D90", weak: "#FFADB0" },
+  // 🌊 teal
+  { strong: "#00AFAF", midStrong: "#19BDBD", mid: "#3CCACA", weak: "#7BDFDF" },
+  // 🌻 sunflower
+  { strong: "#D89A00", midStrong: "#E3AC1F", mid: "#EDBE42", weak: "#F4D27E" },
+  // 🍇 grape
+  { strong: "#6A3CF0", midStrong: "#7E57F4", mid: "#9574F7", weak: "#B49EF9" },
+  // 🌹 rose
+  { strong: "#E43F5A", midStrong: "#EB5D74", mid: "#F07A8C", weak: "#F6A8B2" },
+  // 🪵 brown
+  { strong: "#A06A3A", midStrong: "#B17C4F", mid: "#C29166", weak: "#D8B08E" },
+  // 🟢 lime
+  { strong: "#5BAF00", midStrong: "#71BE1E", mid: "#89CC3E", weak: "#AFDE7A" },
+  // 🌌 indigo
+  { strong: "#3F51B5", midStrong: "#5A6AC3", mid: "#7583D0", weak: "#A2ACE0" },
+  // 🧊 cyan
+  { strong: "#00A3D9", midStrong: "#1DB4E3", mid: "#45C5EC", weak: "#8EDDF4" },
+  // 🍉 watermelon
+  { strong: "#EF476F", midStrong: "#F26586", mid: "#F5839C", weak: "#F8AFC0" },
 ];
 
 function mixHex(hexA: string, hexB: string, t: number) {
@@ -274,7 +292,7 @@ function spreadNodes(nodes: GraphNode[], edges: GraphEdge[], width: number, heig
 
   const cx = Math.max(120, Math.floor(width / 2));
   const cy = Math.max(120, Math.floor(height / 2));
-  const compRing = Math.max(140, Math.min(width, height) * 0.32);
+  const compRing = Math.max(220, Math.min(width, height) * 0.42);
   const compCount = Math.max(components.length, 1);
   const compCenterByNode = new Map<string, { x: number; y: number }>();
 
@@ -295,7 +313,7 @@ function spreadNodes(nodes: GraphNode[], edges: GraphEdge[], width: number, heig
     const center = compCenterByNode.get(n.id) || { x: cx, y: cy };
     const rank = rankById.get(n.id) ?? 0;
     const angle = rank * 2.399963229728653;
-    const localRadius = 12 + Math.sqrt(rank + 1) * 16;
+    const localRadius = 22 + Math.sqrt(rank + 1) * 28;
     return {
       ...n,
       id: n.id,
@@ -310,28 +328,28 @@ function spreadNodes(nodes: GraphNode[], edges: GraphEdge[], width: number, heig
 const FORCE_LAYOUT = {
   type: "force" as const,
   preventOverlap: true,
-  preventOverlapPadding: 30,
+  preventOverlapPadding: 46,
   nodeSize: 22,
-  nodeSpacing: 20,
-  linkDistance: 185,
-  nodeStrength: -760,
-  edgeStrength: 0.08,
-  gravity: 0.08,
+  nodeSpacing: 34,
+  linkDistance: 240,
+  nodeStrength: -980,
+  edgeStrength: 0.07,
+  gravity: 0.05,
 };
 
 function linkDistanceByRelation(edge: { relationType?: string; type?: string; confidence?: number | null }) {
   const type = edge.relationType || edge.type || "related";
   const c = typeof edge.confidence === "number" ? Math.max(0, Math.min(1, edge.confidence)) : 0.55;
   const baseByType: Record<string, number> = {
-    supports: 150,
-    example_of: 165,
-    related: 220,
-    weak_related: 280,
-    fallback: 320,
+    supports: 190,
+    example_of: 205,
+    related: 260,
+    weak_related: 320,
+    fallback: 360,
   };
   const base = baseByType[type] ?? 220;
   // 置信度越高，距离越短；越低，距离越长
-  return Math.max(120, Math.min(360, base + (1 - c) * 80 - c * 30));
+  return Math.max(150, Math.min(430, base + (1 - c) * 90 - c * 35));
 }
 
 function edgeStrengthByRelation(edge: { relationType?: string; type?: string; confidence?: number | null }) {

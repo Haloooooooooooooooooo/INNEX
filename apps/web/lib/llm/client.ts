@@ -356,8 +356,10 @@ async function runVisionPrompt(input: { dataUrl: string; prompt: string; maxToke
   ];
 
   let lastError = "vision_unknown_error";
+  const attemptErrors: string[] = [];
   for (const model of candidates) {
     for (const buildPayload of payloadBuilders) {
+      const payloadStyle = buildPayload === payloadBuilders[0] ? "image_url_object" : "image_url_string";
       try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -378,11 +380,14 @@ async function runVisionPrompt(input: { dataUrl: string; prompt: string; maxToke
         }
         const body = await res.text().catch(() => "");
         lastError = `vision request failed: ${res.status} model=${model} body=${body.slice(0, 220)}`;
+        attemptErrors.push(`model=${model} style=${payloadStyle} status=${res.status} body=${body.slice(0, 140)}`);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "vision_request_error";
         lastError = `vision request failed: timeout_or_network model=${model} detail=${msg}`;
+        attemptErrors.push(`model=${model} style=${payloadStyle} network_or_timeout=${msg.slice(0, 140)}`);
       }
     }
   }
-  throw new Error(lastError);
+  const trace = attemptErrors.length ? ` attempts=[${attemptErrors.join(" | ")}]` : "";
+  throw new Error(`${lastError}${trace}`);
 }
