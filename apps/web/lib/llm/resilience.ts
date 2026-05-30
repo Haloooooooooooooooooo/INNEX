@@ -46,3 +46,36 @@ export async function withRetry<T>(
   throw lastError instanceof Error ? lastError : new Error("retry_failed");
 }
 
+/**
+ * Runs `fn` over `items` with a bounded number of in-flight tasks.
+ * - Preserves input order in the result array (result[i] maps to items[i]).
+ * - A task that throws resolves to `null` for that slot (it does not reject the whole batch).
+ * - `limit` is clamped to [1, items.length]; limit<=1 degrades to sequential.
+ */
+export async function mapWithConcurrency<TIn, TOut>(
+  items: TIn[],
+  limit: number,
+  fn: (item: TIn, index: number) => Promise<TOut>
+): Promise<Array<TOut | null>> {
+  const results: Array<TOut | null> = new Array(items.length).fill(null);
+  if (!items.length) return results;
+  const bounded = Math.max(1, Math.min(Math.floor(limit) || 1, items.length));
+  let cursor = 0;
+
+  async function worker() {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) return;
+      try {
+        results[index] = await fn(items[index], index);
+      } catch {
+        results[index] = null;
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: bounded }, () => worker()));
+  return results;
+}
+

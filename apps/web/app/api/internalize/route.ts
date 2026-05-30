@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { extractTextFromImageDataUrl, generateCompletion, generateEmbedding } from "@/lib/llm/client";
 import { ERROR_CODES, errorBody } from "@/lib/api/error-codes";
-import { withRetry } from "@/lib/llm/resilience";
+import { withRetry, mapWithConcurrency } from "@/lib/llm/resilience";
 import { extractDocumentTextDetailed } from "@/lib/parse/document-extractor";
 import { classifyRelation } from "@/lib/graph/relation-classifier";
 import {
@@ -45,6 +45,8 @@ const RELATION_MATCH_THRESHOLD = Math.max(
 const EXAMPLE_HINTS = ["例如", "案例", "示例", "实战", "模板", "样例", "case", "example", "template"];
 const RELATION_CONSERVATIVE_MODE = String(process.env.INTERNALIZE_RELATION_MODE || "conservative") === "conservative";
 const RELATION_LLM_MAX_CANDIDATES = Math.max(1, Math.min(60, Number(process.env.INTERNALIZE_RELATION_LLM_MAX_CANDIDATES || 30)));
+const RELATION_LLM_CONCURRENCY = Math.max(1, Math.min(16, Number(process.env.INTERNALIZE_LLM_CONCURRENCY || 5)));
+const EMBED_CONCURRENCY = Math.max(1, Math.min(16, Number(process.env.INTERNALIZE_EMBED_CONCURRENCY || 5)));
 const MAX_FALLBACK_RELATIONS_PER_NOTE = Math.max(
   0,
   Math.min(20, Number(process.env.INTERNALIZE_MAX_FALLBACK_RELATIONS_PER_NOTE || 6))
@@ -751,12 +753,15 @@ export async function POST(request: Request) {
     stage = "embed_chunks";
     // Re-internalize should refresh chunk set, avoiding stale duplicate retrieval vectors.
     await supabase.from("note_chunks").delete().eq("note_id", note.id).eq("user_id", user.id);
+    // Embeddings are independent per chunk -> compute with bounded concurrency, then insert
+    // in chunk_index order. A failed embedding leaves that slot null and is skipped.
+    const noteChunkEmbeddings = await mapWithConcurrency(chunks, EMBED_CONCURRENCY, (chunk) =>
+      withRetry(() => generateEmbedding(chunk), { attempts: 2, timeoutMs: 20000 })
+    );
     for (let i = 0; i < chunks.length; i++) {
+      const embedding = noteChunkEmbeddings[i];
+      if (!embedding) continue;
       try {
-        const embedding = await withRetry(() => generateEmbedding(chunks[i]), {
-          attempts: 2,
-          timeoutMs: 20000,
-        });
         await supabase.from("note_chunks").insert({
           user_id: user.id,
           note_id: note.id,
@@ -900,10 +905,17 @@ export async function POST(request: Request) {
             ...(Array.isArray(concepts) ? concepts : []).map((x) => normalizeTerm(String(x))).filter(Boolean),
           ]);
 
+          // Build deduped, ordered candidate list (preserves original dedup + MAX cap).
+          const orderedCandidates: Array<{ note_id: string; similarity: number; source_chunk: number }> = [];
           for (const match of similar as Array<{ note_id: string; similarity: number; source_chunk: number }>) {
             if (match.note_id === note.id || seenNoteIds.has(match.note_id)) continue;
             seenNoteIds.add(match.note_id);
+            orderedCandidates.push(match);
+            if (seenNoteIds.size >= MAX_RELATIONS_PER_NOTE) break;
+          }
 
+          // Precompute per-candidate derived data (pure CPU, no I/O).
+          const prepped = orderedCandidates.map((match) => {
             const similarity = Number((match as { similarity?: number }).similarity ?? 0.72);
             const targetMeta = targetNoteMeta.get(match.note_id);
             const targetKeywords = new Set<string>([
@@ -921,45 +933,45 @@ export async function POST(request: Request) {
             });
             const confidenceBase = overlapCount >= 2 ? similarity + 0.06 : similarity;
             const liteConfidence = Math.max(0.5, Math.min(0.98, confidenceBase));
-            let relationType: "related" | "supports" | "example_of" | "weak_related" | "fallback" = liteType;
-            let confidence = liteConfidence;
+            return { match, similarity, targetMeta, overlap, overlapCount, liteType, liteConfidence };
+          });
+
+          // Phase 1: concurrent LLM typing for the first `budget` candidates (bounded concurrency).
+          const llmBudget = Math.max(0, RELATION_LLM_MAX_CANDIDATES - llmClassifiedCount);
+          const llmTargets = prepped.slice(0, llmBudget);
+          const decisions = await mapWithConcurrency(llmTargets, RELATION_LLM_CONCURRENCY, (p) =>
+            classifyRelation({
+              source: { title: note.title || "", summary: summary || "", tags: generatedTags || [], concepts: concepts || [] },
+              target: {
+                title: p.targetMeta?.title || "",
+                summary: p.targetMeta?.summary || "",
+                tags: p.targetMeta?.tags || [],
+                concepts: p.targetMeta?.concepts || [],
+              },
+              recall: { similarity: p.similarity, overlap: p.overlap, keywordHits: [], sourceChunk: p.match.source_chunk },
+              mode: RELATION_CONSERVATIVE_MODE ? "conservative" : "balanced",
+            })
+          );
+
+          // Phase 2: serial apply (DB inserts + budget/dedup accounting), preserving original order/semantics.
+          for (let pi = 0; pi < prepped.length; pi += 1) {
+            const p = prepped[pi];
+            const { match, similarity, targetMeta, overlap, overlapCount } = p;
+            let relationType: "related" | "supports" | "example_of" | "weak_related" | "fallback" = p.liteType;
+            let confidence = p.liteConfidence;
             let llmDecisionReason = "lite_fallback";
             let llmEvidenceSummary = "";
-            if (llmClassifiedCount < RELATION_LLM_MAX_CANDIDATES) {
-              try {
-                const decision = await classifyRelation({
-                  source: {
-                    title: note.title || "",
-                    summary: summary || "",
-                    tags: generatedTags || [],
-                    concepts: concepts || [],
-                  },
-                  target: {
-                    title: targetMeta?.title || "",
-                    summary: targetMeta?.summary || "",
-                    tags: targetMeta?.tags || [],
-                    concepts: targetMeta?.concepts || [],
-                  },
-                  recall: {
-                    similarity,
-                    overlap,
-                    keywordHits: [],
-                    sourceChunk: match.source_chunk,
-                  },
-                  mode: RELATION_CONSERVATIVE_MODE ? "conservative" : "balanced",
-                });
-                llmClassifiedCount += 1;
-                llmDecisionReason = decision.decision_reason || "llm_decision";
-                llmEvidenceSummary = decision.evidence_summary || "";
-                const typeFloor = minConfidenceByType(decision.relation_type);
-                if (decision.relation_type !== "none" && decision.confidence >= Math.max(RELATION_LLM_MIN_CONFIDENCE, typeFloor)) {
-                  relationType = decision.relation_type;
-                  confidence = Math.max(0.45, Math.min(0.99, decision.confidence));
-                } else if (RELATION_CONSERVATIVE_MODE && similarity < 0.66 && overlapCount === 0) {
-                  continue;
-                }
-              } catch {
-                // keep lite fallback
+            const decision = pi < llmTargets.length ? decisions[pi] : null;
+            if (decision) {
+              llmClassifiedCount += 1;
+              llmDecisionReason = decision.decision_reason || "llm_decision";
+              llmEvidenceSummary = decision.evidence_summary || "";
+              const typeFloor = minConfidenceByType(decision.relation_type);
+              if (decision.relation_type !== "none" && decision.confidence >= Math.max(RELATION_LLM_MIN_CONFIDENCE, typeFloor)) {
+                relationType = decision.relation_type;
+                confidence = Math.max(0.45, Math.min(0.99, decision.confidence));
+              } else if (RELATION_CONSERVATIVE_MODE && similarity < 0.66 && overlapCount === 0) {
+                continue;
               }
             }
             const evidenceSummaryParts = [
@@ -1017,7 +1029,6 @@ export async function POST(request: Request) {
               createdCount += 1;
               embeddingOrLlmEdgesCount += 1;
             }
-            if (seenNoteIds.size >= MAX_RELATIONS_PER_NOTE) break;
           }
         }
       }
@@ -1087,43 +1098,48 @@ export async function POST(request: Request) {
 
         semanticSeedCandidates = seedScored.length;
 
-        for (const s of seedScored) {
+        // Eligible = not already linked. LLM-classify up to the remaining budget concurrently,
+        // then apply serially (insert + dual-cap accounting preserved).
+        const seedEligible = seedScored.filter((s) => !existingTargets.has(s.row.id));
+        const seedLlmBudget = Math.max(0, RELATION_LLM_MAX_CANDIDATES - llmClassifiedCount);
+        const seedToClassify = seedEligible.slice(0, seedLlmBudget);
+        const seedDecisions = await mapWithConcurrency(seedToClassify, RELATION_LLM_CONCURRENCY, (s) => {
+          const pseudoSimilarity = Math.max(0.5, Math.min(0.86, 0.5 + s.score * 0.05));
+          return classifyRelation({
+            source: { title: note.title || "", summary: summary || "", tags: generatedTags || [], concepts: concepts || [] },
+            target: {
+              title: s.row.title || "",
+              summary: s.row.summary || "",
+              tags: Array.isArray(s.row.tags) ? (s.row.tags as string[]) : [],
+              concepts: Array.isArray(s.row.concepts) ? (s.row.concepts as string[]) : [],
+            },
+            recall: {
+              similarity: pseudoSimilarity,
+              overlap: s.overlap,
+              keywordHits: [...s.titleOverlap, ...s.nonGenericOverlap].slice(0, 4),
+            },
+            mode: RELATION_CONSERVATIVE_MODE ? "conservative" : "balanced",
+          });
+        });
+
+        for (let si = 0; si < seedToClassify.length; si += 1) {
           if (createdCount >= MAX_RELATIONS_PER_NOTE) break;
-          if (llmClassifiedCount >= RELATION_LLM_MAX_CANDIDATES) break;
+          const s = seedToClassify[si];
           if (existingTargets.has(s.row.id)) continue;
+          const decision = seedDecisions[si];
+          if (!decision) continue;
+          llmClassifiedCount += 1;
+
+          // Semantic-seed path only accepts strong/medium relations, not weak/fallback.
+          if (
+            !["related", "supports", "example_of"].includes(decision.relation_type) ||
+            decision.confidence < Math.max(RELATION_LLM_MIN_CONFIDENCE, minConfidenceByType(decision.relation_type))
+          ) {
+            continue;
+          }
 
           const pseudoSimilarity = Math.max(0.5, Math.min(0.86, 0.5 + s.score * 0.05));
           try {
-            const decision = await classifyRelation({
-              source: {
-                title: note.title || "",
-                summary: summary || "",
-                tags: generatedTags || [],
-                concepts: concepts || [],
-              },
-              target: {
-                title: s.row.title || "",
-                summary: s.row.summary || "",
-                tags: Array.isArray(s.row.tags) ? (s.row.tags as string[]) : [],
-                concepts: Array.isArray(s.row.concepts) ? (s.row.concepts as string[]) : [],
-              },
-              recall: {
-                similarity: pseudoSimilarity,
-                overlap: s.overlap,
-                keywordHits: [...s.titleOverlap, ...s.nonGenericOverlap].slice(0, 4),
-              },
-              mode: RELATION_CONSERVATIVE_MODE ? "conservative" : "balanced",
-            });
-            llmClassifiedCount += 1;
-
-            // Semantic-seed path only accepts strong/medium relations, not weak/fallback.
-            if (
-              !["related", "supports", "example_of"].includes(decision.relation_type) ||
-              decision.confidence < Math.max(RELATION_LLM_MIN_CONFIDENCE, minConfidenceByType(decision.relation_type))
-            ) {
-              continue;
-            }
-
             const ins = await supabase
               .from("note_relations")
               .insert({
@@ -1430,12 +1446,14 @@ async function rebuildSourceChunksBestEffort(
   for (const row of sourceRows) {
     if (!row.content?.trim()) continue;
     const chunks = chunkSourceText(row.content);
+    // Compute embeddings with bounded concurrency, then insert in chunk_index order.
+    const embeddings = await mapWithConcurrency(chunks, EMBED_CONCURRENCY, (chunk) =>
+      withRetry(() => generateEmbedding(chunk), { attempts: 2, timeoutMs: 20000 })
+    );
     for (let i = 0; i < chunks.length; i += 1) {
+      const embedding = embeddings[i];
+      if (!embedding) continue;
       try {
-        const embedding = await withRetry(() => generateEmbedding(chunks[i]), {
-          attempts: 2,
-          timeoutMs: 20000,
-        });
         const insertResult = await supabase.from("source_chunks").insert({
           user_id: userId,
           capture_item_id: captureItemId,
