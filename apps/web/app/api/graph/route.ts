@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const DEFAULT_LIMIT = 300;
 const MAX_LIMIT = 1000;
-const ALLOWED_RELATION_TYPES = new Set(["related", "supports", "example_of"]);
+const ALLOWED_RELATION_TYPES = new Set(["related", "supports", "example_of", "weak_related", "fallback"]);
 
 type GraphNode = {
   id: string;

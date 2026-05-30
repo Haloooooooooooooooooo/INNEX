@@ -33,8 +33,19 @@ type NoteDetailResponse = {
   relations: Array<{ id: string; source_note_id: string; target_note_id: string; relation_type: string }>;
 };
 
-const RELATION_COLORS: Record<string, string> = { related: "#6B7280", supports: "#2563EB", example_of: "#16A34A" };
+const RELATION_COLORS: Record<string, string> = {
+  related: "#6B7280",
+  supports: "#2563EB",
+  example_of: "#16A34A",
+  weak_related: "#94A3B8",
+  fallback: "#B8BCC5",
+};
 const relationColor = (t: string) => RELATION_COLORS[t] || "#6B7280";
+function relationLineDash(type: string): number[] | undefined {
+  if (type === "weak_related") return [6, 6];
+  if (type === "fallback") return [3, 7];
+  return undefined;
+}
 function hexToRgb(hex: string) {
   const cleaned = hex.replace("#", "");
   const full = cleaned.length === 3 ? cleaned.split("").map((x) => x + x).join("") : cleaned;
@@ -102,6 +113,24 @@ const fmtDateTime = (value?: string) => {
   const min = String(d.getMinutes()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
 };
+
+function truncateGraphLabel(input: string, maxUnits = 15): string {
+  const text = String(input || "").trim();
+  if (!text) return "";
+  let units = 0;
+  const out: string[] = [];
+  const parts = text.match(/[\u4e00-\u9fff]|[A-Za-z0-9]+|[^\s]/g) || [];
+  for (const part of parts) {
+    const isChineseChar = /^[\u4e00-\u9fff]$/.test(part);
+    const cost = isChineseChar ? 1 : 1; // 中文按字；非中文按“词/符号”记 1
+    if (units + cost > maxUnits) break;
+    out.push(part);
+    units += cost;
+  }
+  const normalizedOut = out.join(" ").replace(/\s+([,.;!?])/g, "$1");
+  if (normalizedOut.length >= text.length) return normalizedOut;
+  return `${normalizedOut}...`;
+}
 
 function renderRichMarkdown(content: string) {
   const cleanInline = (s: string) =>
@@ -196,20 +225,66 @@ function renderRichMarkdown(content: string) {
   return <div className="space-y-2">{nodes}</div>;
 }
 
-function spreadNodes(nodes: GraphNode[], width: number, height: number) {
-  const count = Math.max(nodes.length, 1);
+function spreadNodes(nodes: GraphNode[], edges: GraphEdge[], width: number, height: number) {
+  const nodeIds = nodes.map((n) => n.id);
+  const adj = new Map<string, Set<string>>();
+  for (const id of nodeIds) adj.set(id, new Set<string>());
+  for (const e of edges) {
+    if (!adj.has(e.source) || !adj.has(e.target)) continue;
+    adj.get(e.source)!.add(e.target);
+    adj.get(e.target)!.add(e.source);
+  }
+
+  const visited = new Set<string>();
+  const components: string[][] = [];
+  for (const id of nodeIds) {
+    if (visited.has(id)) continue;
+    const comp: string[] = [];
+    const queue = [id];
+    visited.add(id);
+    while (queue.length) {
+      const cur = queue.shift()!;
+      comp.push(cur);
+      for (const nei of adj.get(cur) || []) {
+        if (visited.has(nei)) continue;
+        visited.add(nei);
+        queue.push(nei);
+      }
+    }
+    components.push(comp);
+  }
+  components.sort((a, b) => b.length - a.length);
+
   const cx = Math.max(120, Math.floor(width / 2));
   const cy = Math.max(120, Math.floor(height / 2));
-  const maxR = Math.max(220, Math.min(width, height) * 0.42);
-  return nodes.map((n, i) => {
-    const angle = i * 2.399963229728653;
-    const radius = Math.min(maxR, 80 + Math.sqrt((i + 1) / count) * maxR);
+  const compRing = Math.max(90, Math.min(width, height) * 0.2);
+  const compCount = Math.max(components.length, 1);
+  const compCenterByNode = new Map<string, { x: number; y: number }>();
+
+  components.forEach((comp, idx) => {
+    const angle = (idx / compCount) * Math.PI * 2 - Math.PI / 2;
+    const ring = idx === 0 || compCount <= 1 ? 0 : compRing;
+    const center = {
+      x: cx + Math.cos(angle) * ring,
+      y: cy + Math.sin(angle) * ring,
+    };
+    comp.forEach((id) => compCenterByNode.set(id, center));
+  });
+
+  const rankById = new Map<string, number>();
+  components.forEach((comp) => comp.forEach((id, i) => rankById.set(id, i)));
+
+  return nodes.map((n) => {
+    const center = compCenterByNode.get(n.id) || { x: cx, y: cy };
+    const rank = rankById.get(n.id) ?? 0;
+    const angle = rank * 2.399963229728653;
+    const localRadius = 16 + Math.sqrt(rank + 1) * 20;
     return {
       ...n,
       id: n.id,
       style: {
-        x: cx + Math.cos(angle) * radius,
-        y: cy + Math.sin(angle) * radius,
+        x: center.x + Math.cos(angle) * localRadius,
+        y: center.y + Math.sin(angle) * localRadius,
       },
     };
   });
@@ -221,11 +296,40 @@ const FORCE_LAYOUT = {
   preventOverlapPadding: 24,
   nodeSize: 22,
   nodeSpacing: 14,
-  linkDistance: 240,
-  nodeStrength: -950,
-  edgeStrength: 0.05,
-  gravity: 0.05,
+  linkDistance: 185,
+  nodeStrength: -620,
+  edgeStrength: 0.08,
+  gravity: 0.14,
 };
+
+function linkDistanceByRelation(edge: { relationType?: string; type?: string; confidence?: number | null }) {
+  const type = edge.relationType || edge.type || "related";
+  const c = typeof edge.confidence === "number" ? Math.max(0, Math.min(1, edge.confidence)) : 0.55;
+  const baseByType: Record<string, number> = {
+    supports: 150,
+    example_of: 165,
+    related: 220,
+    weak_related: 280,
+    fallback: 320,
+  };
+  const base = baseByType[type] ?? 220;
+  // 置信度越高，距离越短；越低，距离越长
+  return Math.max(120, Math.min(360, base + (1 - c) * 80 - c * 30));
+}
+
+function edgeStrengthByRelation(edge: { relationType?: string; type?: string; confidence?: number | null }) {
+  const type = edge.relationType || edge.type || "related";
+  const c = typeof edge.confidence === "number" ? Math.max(0, Math.min(1, edge.confidence)) : 0.55;
+  const baseByType: Record<string, number> = {
+    supports: 0.2,
+    example_of: 0.17,
+    related: 0.1,
+    weak_related: 0.06,
+    fallback: 0.04,
+  };
+  const base = baseByType[type] ?? 0.1;
+  return Math.max(0.03, Math.min(0.3, base + c * 0.06));
+}
 
 export default function KbPage() {
   const [search, setSearch] = useState("");
@@ -465,8 +569,8 @@ export default function KbPage() {
           autoFit: "view",
           animation: false,
           data: { nodes: [], edges: [] },
-          node: { style: { labelText: (d: any) => String(d.label || "").slice(0, 12), labelPlacement: "bottom", labelFontSize: 9, fill: (d: any) => d.nodeFill || "#F15A24", fillOpacity: (d: any) => d.nodeFillOpacity ?? 0.2, stroke: (d: any) => d.nodeStroke || "#F15A24", lineWidth: (d: any) => d.nodeLineWidth ?? 1.5, shadowColor: (d: any) => d.shadowColor || "transparent", shadowBlur: (d: any) => d.shadowBlur ?? 0, size: (d: any) => 16 + Math.min((d.degree || 0) * 2, 18) } },
-          edge: { style: { stroke: (d: any) => d.edgeStroke || relationColorByConfidence(d.relationType || "related", d.confidence), strokeOpacity: (d: any) => d.edgeOpacity ?? 0.65, lineWidth: (d: any) => d.edgeLineWidth ?? 1.4 } },
+          node: { style: { labelText: (d: any) => truncateGraphLabel(String(d.label || ""), 15), labelPlacement: "bottom", labelFontSize: 9, labelFill: (d: any) => d.labelFill || "#2f2f2f", labelFontWeight: (d: any) => d.labelFontWeight || 400, fill: (d: any) => d.nodeFill || "#F15A24", fillOpacity: (d: any) => d.nodeFillOpacity ?? 0.2, stroke: (d: any) => d.nodeStroke || "#F15A24", lineWidth: (d: any) => d.nodeLineWidth ?? 1.5, shadowColor: (d: any) => d.shadowColor || "transparent", shadowBlur: (d: any) => d.shadowBlur ?? 0, size: (d: any) => 16 + Math.min((d.degree || 0) * 2, 18) } },
+          edge: { style: { stroke: (d: any) => d.edgeStroke || relationColorByConfidence(d.relationType || "related", d.confidence), strokeOpacity: (d: any) => d.edgeOpacity ?? 0.65, lineWidth: (d: any) => d.edgeLineWidth ?? 1.4, lineDash: (d: any) => d.edgeLineDash } },
           layout: FORCE_LAYOUT,
           behaviors: ["drag-canvas", "zoom-canvas", "drag-element"],
         });
@@ -504,7 +608,17 @@ export default function KbPage() {
       await safeRun(() =>
         graph.setOptions?.({
           layout: hasEdges
-            ? FORCE_LAYOUT
+            ? {
+                ...FORCE_LAYOUT,
+                linkDistance: (d: any) => linkDistanceByRelation(d),
+                edgeStrength: (d: any) => edgeStrengthByRelation(d),
+                nodeStrength: (d: any) => {
+                  const degree = Number(d?.degree || 0);
+                  if (degree <= 0) return -220;
+                  if (degree <= 1) return -360;
+                  return -620;
+                },
+              }
             : {
                 type: "grid",
                 preventOverlap: true,
@@ -517,7 +631,7 @@ export default function KbPage() {
       await safeRun(() =>
         graph.setData({
           nodes: hasEdges
-            ? spreadNodes(nodes, rect.width, rect.height).map((n: any) => {
+            ? spreadNodes(nodes, edges, rect.width, rect.height).map((n: any) => {
               const highlightedByHover = hoverNodeId ? hoverContext.relatedNodeIds.has(n.id) : false;
               const highlightedBySelect = selectedNoteId === n.id;
               const highlighted = highlightedByHover || highlightedBySelect;
@@ -536,6 +650,8 @@ export default function KbPage() {
                 ...n,
                 nodeFill: highlightedByHover ? deepColor : baseColor,
                 nodeStroke: highlightedBySelect ? "#111111" : "transparent",
+                labelFill: highlightedByHover || highlightedBySelect ? "#111111" : "#3f3f3f",
+                labelFontWeight: highlightedByHover || highlightedBySelect ? 700 : 400,
                 nodeFillOpacity: highlightedByHover ? 0.98 : Math.max(0.62, 0.78 + strength * 0.2),
                 nodeLineWidth: highlightedBySelect ? 2.2 : 0,
                 shadowColor: highlightedBySelect
@@ -551,7 +667,7 @@ export default function KbPage() {
                 size: highlightedBySelect ? 28 + pulse * 2 : highlightedByHover ? 24 : 20,
               };
             })
-            : spreadNodes(nodes, rect.width, rect.height).map((n: any) => ({
+            : spreadNodes(nodes, edges, rect.width, rect.height).map((n: any) => ({
                 ...n,
                 nodeFill: "#F15A24",
                 nodeStroke: "transparent",
@@ -566,6 +682,7 @@ export default function KbPage() {
             relationType: e.type || "related",
             type: "line",
             edgeStroke: relationColorByConfidence(e.type || "related", e.confidence),
+            edgeLineDash: relationLineDash(e.type || "related"),
             edgeOpacity: hoverNodeId
               ? (hoverContext.relatedEdgeIds.has(e.id)
                 ? (0.95 + 0.05 * (0.5 + 0.5 * Math.sin(pulseTick * 0.5)))
@@ -573,9 +690,9 @@ export default function KbPage() {
               : 0.52,
             edgeLineWidth: hoverNodeId
               ? (hoverContext.relatedEdgeIds.has(e.id)
-                ? (3.0 + 0.8 * (0.5 + 0.5 * Math.sin(pulseTick * 0.5)))
-                : 1.8)
-              : 1.8,
+                ? ((e.type === "supports" || e.type === "example_of" ? 3.4 : 2.8) + 0.8 * (0.5 + 0.5 * Math.sin(pulseTick * 0.5)))
+                : (e.type === "supports" || e.type === "example_of" ? 2.2 : 1.8))
+              : (e.type === "supports" || e.type === "example_of" ? 2.2 : 1.8),
           })),
         })
       );
@@ -675,6 +792,31 @@ export default function KbPage() {
             <div className="h-full min-h-0 flex gap-3">
               <div className="bg-white rounded-xl border border-[--border-light] min-h-[560px] h-full overflow-hidden relative flex-1">
                 {error ? <div className="p-4 text-sm text-red-500">{error}</div> : filteredEdges.length === 0 && graphData.nodes.length === 0 ? <div className="h-full flex items-center justify-center text-sm text-muted-foreground">知识库为空</div> : <div ref={graphWrapRef} className="w-full h-full" />}
+                <div className="absolute left-3 top-3 bg-white/92 border border-[--border-light] rounded-lg px-2.5 py-2 shadow-sm z-10 min-w-[168px]">
+                  <div className="text-[10px] font-semibold text-[--text-secondary] mb-1">关系图例</div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-[10px] text-[--ink]">
+                      <span className="inline-block w-7 border-t-2 border-[#2563EB]" />
+                      <span>supports</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px] text-[--ink]">
+                      <span className="inline-block w-7 border-t-2 border-[#16A34A]" />
+                      <span>example_of</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px] text-[--ink]">
+                      <span className="inline-block w-7 border-t-2 border-[#6B7280]" />
+                      <span>related</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px] text-[--ink]">
+                      <span className="inline-block w-7 border-t-2 border-[#94A3B8] border-dashed" />
+                      <span>weak_related</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px] text-[--ink]">
+                      <span className="inline-block w-7 border-t-2 border-[#B8BCC5] border-dashed" />
+                      <span>fallback</span>
+                    </div>
+                  </div>
+                </div>
                 <div className="absolute right-3 top-3 flex items-center gap-2 bg-white/90 border border-[--border-light] rounded-lg p-1.5 shadow-sm z-10">
                   <button onClick={() => graphRef.current?.zoomBy(1.2)} className="text-xs px-2 py-1 rounded hover:bg-[--innex-accent-dim]">+</button>
                   <button onClick={() => graphRef.current?.zoomBy(0.85)} className="text-xs px-2 py-1 rounded hover:bg-[--innex-accent-dim]">-</button>

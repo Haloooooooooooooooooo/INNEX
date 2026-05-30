@@ -1,6 +1,6 @@
-﻿"use client";
+"use client";
 
-import { useState, useRef } from "react";
+import { useRef, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 
 interface AttachmentDraft {
@@ -21,174 +21,155 @@ interface QuickCaptureProps {
   }) => Promise<{
     success?: boolean;
     error?: string;
-    item?: {
-      parse_debug?: {
-        input_source?: string;
-        readable?: boolean | "partial";
-        extracted_chars?: number;
-        model_summary_succeeded?: boolean;
-        model_tags_succeeded?: boolean;
-        notes?: string[];
-      } | null;
-    };
   }>;
 }
 
+function splitBlocksByDashLine(raw: string): string[] {
+  return raw
+    .split(/\r?\n\s*----\s*\r?\n/g)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
 export function QuickCapture({ onAdd }: QuickCaptureProps) {
-  const [content, setContent] = useState("");
-  const [myUnderstanding, setMyUnderstanding] = useState("");
+  const [entryMode, setEntryMode] = useState<"single" | "batch">("single");
+  const [batchMode, setBatchMode] = useState<"non_doc" | "doc">("non_doc");
   const [status, setStatus] = useState<"later" | "pending">("later");
-  const [savingCount, setSavingCount] = useState(0);
-  const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
-  const [files, setFiles] = useState<File[]>([]);
-  const [fetchedTitle, setFetchedTitle] = useState<string | null>(null);
-  const [fetchedContent, setFetchedContent] = useState<string | null>(null);
-  const [fetchingTitle, setFetchingTitle] = useState(false);
+  const [singleContent, setSingleContent] = useState("");
+  const [singleUnderstanding, setSingleUnderstanding] = useState("");
+  const [singleFiles, setSingleFiles] = useState<File[]>([]);
+  const [bulkText, setBulkText] = useState("");
+  const [docFiles, setDocFiles] = useState<File[]>([]);
+  const [submitting, setSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const urlTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const singleFileRef = useRef<HTMLInputElement>(null);
+  const batchFileRef = useRef<HTMLInputElement>(null);
 
-  function handleContentChange(val: string) {
-    setContent(val);
-    const urlMatch = val.trim().match(/(https?:\/\/[^\s]+)/i);
-    if (urlMatch) {
-      const url = urlMatch[1];
-      if (urlTimeoutRef.current) clearTimeout(urlTimeoutRef.current);
-      urlTimeoutRef.current = setTimeout(async () => {
-        setFetchingTitle(true);
-        try {
-          const res = await fetch("/api/parse-url", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url }),
-          });
-          const data = await res.json();
-          if (data.title) setFetchedTitle(data.title);
-          if (data.content) setFetchedContent(data.content);
-        } catch {
-          // ignore
-        } finally {
-          setFetchingTitle(false);
-        }
-      }, 600);
-    } else {
-      setFetchedTitle(null);
-      setFetchedContent(null);
-    }
-  }
-
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const inputFiles = e.target.files;
-    if (!inputFiles) return;
-    addFiles(inputFiles);
-    if (fileRef.current) fileRef.current.value = "";
-  }
-
-  function addFiles(fileList: FileList | File[]) {
-    const list = Array.from(fileList);
-    if (list.length === 0) return;
-    for (const f of list) {
-      setAttachments((prev) => [...prev, { name: f.name, size: f.size, type: f.type }]);
-      setFiles((prev) => [...prev, f]);
-    }
-  }
-
-  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragging(false);
-    const dropped = e.dataTransfer.files;
-    if (!dropped || dropped.length === 0) return;
-    addFiles(dropped);
-  }
-
-  function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-  }
-
-  function handleDragEnter(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragging(true);
-  }
-
-  function handleDragLeave(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-    setDragging(false);
-  }
-
-  function removeAttachment(index: number) {
-    setAttachments((prev) => prev.filter((_, i) => i !== index));
-    setFiles((prev) => prev.filter((_, i) => i !== index));
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const hasContent = content.trim().length > 0;
-    const hasAttachments = attachments.length > 0;
-    if (!hasContent && !hasAttachments) return;
-
-    const payload = {
-      content: content.trim(),
-      my_understanding: myUnderstanding.trim() || undefined,
-      status,
-      url_title: fetchedTitle || undefined,
-      url_content: fetchedContent || undefined,
-      attachments: attachments.length > 0 ? attachments : undefined,
-      files: files.length > 0 ? files : undefined,
-    };
-
-    setContent("");
-    setMyUnderstanding("");
-    setStatus("later");
-    setFetchedTitle(null);
-    setFetchedContent(null);
-    setAttachments([]);
-    setFiles([]);
-    setSavingCount((n) => n + 1);
-
-    const result = await onAdd(payload);
-
-    if (result.success) {
-      const notes = result.item?.parse_debug?.notes || [];
-      const summaryErr = notes.find((n) => n.startsWith("summary_error:"));
-      const tagsErr = notes.find((n) => n.startsWith("tags_error:"));
-      if (summaryErr || tagsErr) {
-        const reason = [summaryErr, tagsErr].filter(Boolean).join(" | ");
-        setToastMessage(`已收录，摘要/标签稍后补全（${reason}）`);
-      } else if (notes.some((n) => n.startsWith("pdf_likely_scanned:"))) {
-        setToastMessage("已收录（检测到疑似扫描版 PDF，解析结果可能需要稍后补全）");
-      } else {
-        setToastMessage("收录成功");
-      }
-    } else {
-      setToastMessage(result.error || "创建记录失败，请稍后重试");
-    }
-    setSavingCount((n) => Math.max(0, n - 1));
-  }
+  const selectedBtnCls =
+    "bg-[#FF5A00] text-[#FFFFFF] border-[#FF5A00] shadow-[0_6px_14px_rgba(255,90,0,0.32)]";
+  const unselectedBtnCls =
+    "bg-white/45 border-[rgba(0,0,0,0.16)] text-[--text-secondary] hover:border-[--innex-accent] hover:text-[--innex-accent]";
 
   function dismissToast() {
     setToastMessage(null);
   }
 
-  const hasContent = content.trim().length > 0;
-  const hasAttachments = attachments.length > 0;
-  const isUrl = /(https?:\/\/[^\s]+)/i.test(content.trim());
-  const urlFetching = isUrl && fetchingTitle;
-  const imageAttachmentCount = attachments.filter((a) => a.type.startsWith("image/")).length;
-  const canSubmit = hasContent || hasAttachments;
-  const showUrlTitle = fetchedTitle && hasContent;
+  function addBatchFiles(fileList: FileList | File[]) {
+    const list = Array.from(fileList);
+    if (!list.length) return;
+    setDocFiles((prev) => [...prev, ...list]);
+  }
+
+  function removeBatchFile(index: number) {
+    setDocFiles((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function addSingleFiles(fileList: FileList | File[]) {
+    const list = Array.from(fileList);
+    if (!list.length) return;
+    setSingleFiles((prev) => [...prev, ...list]);
+  }
+
+  function removeSingleFile(index: number) {
+    setSingleFiles((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  async function submitSingle() {
+    const trimmed = singleContent.trim();
+    if (!trimmed && !singleFiles.length) {
+      setToastMessage("请先输入内容或上传附件。");
+      return;
+    }
+    const submitPayload = {
+      content: trimmed,
+      my_understanding: singleUnderstanding.trim() || undefined,
+      status,
+      attachments: singleFiles.length
+        ? singleFiles.map((f) => ({ name: f.name, size: f.size, type: f.type || "application/octet-stream" }))
+        : undefined,
+      files: singleFiles.length ? singleFiles : undefined,
+    };
+
+    // 先清空输入区，允许马上继续录入下一条
+    setSingleContent("");
+    setSingleUnderstanding("");
+    setSingleFiles([]);
+    if (singleFileRef.current) singleFileRef.current.value = "";
+
+    const result = await onAdd(submitPayload);
+    setToastMessage(result.success ? "单次录入成功" : (result.error || "单次录入失败"));
+  }
+
+  async function submitNonDocBatch() {
+    const blocks = splitBlocksByDashLine(bulkText);
+    if (!blocks.length) {
+      setToastMessage("请先粘贴内容。每条记录之间用单独一行 ---- 分隔。");
+      return;
+    }
+
+    setSubmitting(true);
+    let success = 0;
+    let failed = 0;
+    for (const block of blocks) {
+      const result = await onAdd({
+        content: block,
+        status,
+      });
+      if (result.success) success += 1;
+      else failed += 1;
+    }
+    setSubmitting(false);
+    setBulkText("");
+    setToastMessage(`非文档批量完成：成功 ${success}，失败 ${failed}`);
+  }
+
+  async function submitDocBatch() {
+    if (!docFiles.length) {
+      setToastMessage("请先选择文档/图片附件。");
+      return;
+    }
+
+    setSubmitting(true);
+    let success = 0;
+    let failed = 0;
+    for (const file of docFiles) {
+      const result = await onAdd({
+        content: "",
+        status,
+        attachments: [{ name: file.name, size: file.size, type: file.type || "application/octet-stream" }],
+        files: [file],
+      });
+      if (result.success) success += 1;
+      else failed += 1;
+    }
+    setSubmitting(false);
+    setDocFiles([]);
+    if (batchFileRef.current) batchFileRef.current.value = "";
+    setToastMessage(`文档批量完成：成功 ${success}，失败 ${failed}`);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (submitting && entryMode === "batch") return;
+    if (entryMode === "single") {
+      await submitSingle();
+      return;
+    }
+    if (batchMode === "non_doc") {
+      await submitNonDocBatch();
+      return;
+    }
+    await submitDocBatch();
+  }
 
   return (
     <form onSubmit={handleSubmit}>
       {toastMessage && (
-        <div className="fixed right-6 top-6 z-[120] rounded-md bg-[#efe0c8] text-[#5a4630] text-[12px] px-3 py-2 shadow-lg flex items-center gap-2 border border-[#dcc6a1]">
+        <div className="fixed left-1/2 top-5 -translate-x-1/2 z-[120] rounded-md bg-[#efe0c8] text-[#5a4630] text-[12px] px-3 py-2 shadow-lg flex items-center gap-2 border border-[#dcc6a1]">
           <span>{toastMessage}</span>
-          <button type="button" onClick={dismissToast} className="text-[#7a6346] hover:text-[#4f3b23] cursor-pointer">×</button>
+          <button type="button" onClick={dismissToast} className="text-[#7a6346] hover:text-[#4f3b23] cursor-pointer">
+            ×
+          </button>
         </div>
       )}
 
@@ -200,73 +181,140 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
           borderColor: "rgba(0,0,0,0.16)",
         }}
       >
-        <div className="grid grid-cols-2 gap-2 mb-1.5">
-          <div
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            onDragEnter={handleDragEnter}
-            onDragLeave={handleDragLeave}
-            className={`rounded-[8px] transition-colors ${dragging ? "bg-[rgba(241,90,36,0.08)]" : ""}`}
-          >
-            <div className="text-[9px] font-semibold text-[--muted] tracking-[0.05em] uppercase mb-1">内容输入</div>
-            <Textarea
-              placeholder="粘贴链接 / 输入文本 / 拖拽文件..."
-              value={content}
-              onChange={(e) => handleContentChange(e.target.value)}
-              className="w-full border-[rgba(0,0,0,0.16)] rounded-[8px] px-[10px] py-[8px] font-sans text-[11px] text-[--ink] resize-none h-[68px] leading-relaxed bg-white/50 focus:bg-white focus:border-[--innex-accent] focus:shadow-[0_0_0_3px_rgba(241,90,36,0.08)] transition-all placeholder:text-gray-300"
-            />
-            {dragging && <p className="text-[10px] text-[--innex-accent] mt-1">松开即可添加附件</p>}
-            {showUrlTitle && (
-              <p className="text-[10px] text-[--text-secondary] mt-1">
-                识别标题：<span className="font-medium text-[--ink]">{fetchedTitle}</span>
-              </p>
-            )}
-          </div>
-
-          <div>
-            <div className="text-[9px] font-semibold text-[--muted] tracking-[0.05em] uppercase mb-1">
-              我的理解 <span className="text-[--muted] font-normal normal-case text-[9px]">（选填）</span>
-            </div>
-            <Textarea
-              placeholder="写下你对这条内容的理解，会用于后续内化..."
-              value={myUnderstanding}
-              onChange={(e) => setMyUnderstanding(e.target.value)}
-              className="w-full border-[rgba(0,0,0,0.16)] rounded-[8px] px-[10px] py-[8px] font-sans text-[11px] text-[--ink] resize-none h-[68px] leading-relaxed bg-white/50 focus:bg-white focus:border-[--innex-accent] focus:shadow-[0_0_0_3px_rgba(241,90,36,0.08)] transition-all placeholder:text-gray-300"
-            />
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
-          {attachments.map((att, i) => (
-            <span
-              key={i}
-              className="flex items-center gap-1 bg-white/60 rounded-[6px] px-2 py-0.5 text-[10px] text-[--text-secondary] border border-[--border-light]"
-            >
-              <span className="text-[11px]">{att.type.startsWith("image/") ? "🖼" : "📄"}</span>
-              <span className="max-w-[112px] overflow-hidden text-ellipsis whitespace-nowrap">{att.name}</span>
-              <button type="button" onClick={() => removeAttachment(i)} className="text-muted-foreground hover:text-red-500 text-xs">×</button>
-            </span>
-          ))}
-
+        <div className="flex items-center gap-2 mb-2">
           <button
             type="button"
-            onClick={() => fileRef.current?.click()}
-            className="flex items-center gap-1 border border-[rgba(0,0,0,0.16)] rounded-[6px] px-2 py-0.5 cursor-pointer text-[10px] text-[--text-muted] bg-white/45 hover:border-[--innex-accent] hover:text-[--innex-accent] transition-all"
+            onClick={() => setEntryMode("single")}
+            className={`px-3 py-1 rounded-[8px] border text-[11px] transition-all ${
+              entryMode === "single" ? selectedBtnCls : unselectedBtnCls
+            }`}
           >
-            <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
-            </svg>
-            添加附件
+            单次录入
           </button>
-
-          <input ref={fileRef} type="file" multiple onChange={handleFileChange} className="hidden" />
+          <button
+            type="button"
+            onClick={() => setEntryMode("batch")}
+            className={`px-3 py-1 rounded-[8px] border text-[11px] transition-all ${
+              entryMode === "batch" ? selectedBtnCls : unselectedBtnCls
+            }`}
+          >
+            批量录入
+          </button>
         </div>
 
-        {imageAttachmentCount > 10 && (
-          <p className="text-[10px] text-[--text-secondary] mb-2">图片超过10张，本次录入不会读取图片内容，需内化后处理。</p>
+        {entryMode === "batch" ? (
+          <div className="flex items-center gap-2 mb-1">
+            <button
+              type="button"
+              onClick={() => setBatchMode("non_doc")}
+              className={`px-2 py-1 rounded-[7px] border text-[10px] transition-all ${
+                batchMode === "non_doc" ? selectedBtnCls : unselectedBtnCls
+              }`}
+            >
+              非文档批量
+            </button>
+            <button
+              type="button"
+              onClick={() => setBatchMode("doc")}
+              className={`px-2 py-1 rounded-[7px] border text-[10px] transition-all ${
+                batchMode === "doc" ? selectedBtnCls : unselectedBtnCls
+              }`}
+            >
+              文档批量（含图片）
+            </button>
+          </div>
+        ) : null}
+
+        {entryMode === "single" ? (
+          <div className="space-y-2">
+            <Textarea
+              placeholder="输入文本或粘贴链接（单次录入）"
+              value={singleContent}
+              onChange={(e) => setSingleContent(e.target.value)}
+              className="w-full border-[rgba(0,0,0,0.16)] rounded-[8px] px-[10px] py-[8px] font-sans text-[11px] text-[--ink] resize-none h-[88px] leading-relaxed bg-white/50 focus:bg-white focus:border-[--innex-accent]"
+            />
+            <Textarea
+              placeholder="我的理解（选填）"
+              value={singleUnderstanding}
+              onChange={(e) => setSingleUnderstanding(e.target.value)}
+              className="w-full border-[rgba(0,0,0,0.16)] rounded-[8px] px-[10px] py-[8px] font-sans text-[11px] text-[--ink] resize-none h-[64px] leading-relaxed bg-white/50 focus:bg-white focus:border-[--innex-accent]"
+            />
+            <div className="flex items-center gap-2 flex-wrap">
+              {singleFiles.map((f, i) => (
+                <span key={`${f.name}-${i}`} className="flex items-center gap-1 bg-white/60 rounded-[6px] px-2 py-0.5 text-[10px] border border-[--border-light]">
+                  <span>{f.type.startsWith("image/") ? "🖼" : "📄"}</span>
+                  <span className="max-w-[140px] overflow-hidden text-ellipsis whitespace-nowrap">{f.name}</span>
+                  <button type="button" onClick={() => removeSingleFile(i)} className="text-xs text-red-500">×</button>
+                </span>
+              ))}
+              <button
+                type="button"
+                onClick={() => singleFileRef.current?.click()}
+                className="flex items-center gap-1 border border-[rgba(0,0,0,0.16)] rounded-[6px] px-2 py-0.5 cursor-pointer text-[10px] text-[--text-muted] bg-white/45 hover:border-[--innex-accent] hover:text-[--innex-accent] transition-all"
+              >
+                添加附件
+              </button>
+              <input
+                ref={singleFileRef}
+                type="file"
+                multiple
+                onChange={(e) => {
+                  const files = e.target.files;
+                  if (!files) return;
+                  addSingleFiles(files);
+                  if (singleFileRef.current) singleFileRef.current.value = "";
+                }}
+                className="hidden"
+              />
+            </div>
+          </div>
+        ) : batchMode === "non_doc" ? (
+          <div className="space-y-2">
+            <div className="text-[10px] text-[--text-secondary]">一次粘贴多条内容，每条记录之间用单独一行 ---- 分隔。</div>
+            <Textarea
+              placeholder={"示例：\nhttps://mp.weixin.qq.com/s/3Vs5uXwhJNUaPeRsN1E5cg\n----\nhttp://xhslink.com/o/6uleNhVzUyT"}
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+              className="w-full border-[rgba(0,0,0,0.16)] rounded-[8px] px-[10px] py-[8px] font-sans text-[11px] text-[--ink] resize-none h-[120px] leading-relaxed bg-white/50 focus:bg-white focus:border-[--innex-accent]"
+            />
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="text-[10px] text-[--text-secondary]">每个文档/图片作为一条记录批量创建。</div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {docFiles.map((f, i) => (
+                <span key={`${f.name}-${i}`} className="flex items-center gap-1 bg-white/60 rounded-[6px] px-2 py-0.5 text-[10px] border border-[--border-light]">
+                  <span>{f.type.startsWith("image/") ? "🖼" : "📄"}</span>
+                  <span className="max-w-[140px] overflow-hidden text-ellipsis whitespace-nowrap">{f.name}</span>
+                  <button type="button" onClick={() => removeBatchFile(i)} className="text-xs text-red-500">
+                    ×
+                  </button>
+                </span>
+              ))}
+              <button
+                type="button"
+                onClick={() => batchFileRef.current?.click()}
+                className="flex items-center gap-1 border border-[rgba(0,0,0,0.16)] rounded-[6px] px-2 py-0.5 cursor-pointer text-[10px] text-[--text-muted] bg-white/45 hover:border-[--innex-accent] hover:text-[--innex-accent] transition-all"
+              >
+                添加多个文件
+              </button>
+              <input
+                ref={batchFileRef}
+                type="file"
+                multiple
+                onChange={(e) => {
+                  const files = e.target.files;
+                  if (!files) return;
+                  addBatchFiles(files);
+                  if (batchFileRef.current) batchFileRef.current.value = "";
+                }}
+                className="hidden"
+              />
+            </div>
+          </div>
         )}
 
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between mt-2">
           <div className="flex gap-1">
             <button
               type="button"
@@ -274,42 +322,30 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
               className={`flex items-center gap-1 px-2 py-1 rounded-[8px] border text-[10px] transition-all cursor-pointer ${
                 status === "later"
                   ? "bg-[--innex-accent-dim] border-[--innex-accent] text-[--innex-accent]"
-                  : "bg-white/40 border-[rgba(0,0,0,0.16)] text-[--text-secondary] hover:border-[--innex-accent] hover:text-[--innex-accent]"
+                  : "bg-white/40 border-[rgba(0,0,0,0.16)] text-[--text-secondary]"
               }`}
             >
-              <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="10" />
-                <polyline points="12 6 12 12 16 14" />
-              </svg>
               稍后看
             </button>
-
             <button
               type="button"
               onClick={() => setStatus("pending")}
               className={`flex items-center gap-1 px-2 py-1 rounded-[8px] border text-[10px] transition-all cursor-pointer ${
                 status === "pending"
                   ? "bg-[--innex-accent-dim] border-[--innex-accent] text-[--innex-accent]"
-                  : "bg-white/40 border-[rgba(0,0,0,0.16)] text-[--text-secondary] hover:border-[--innex-accent] hover:text-[--innex-accent]"
+                  : "bg-white/40 border-[rgba(0,0,0,0.16)] text-[--text-secondary]"
               }`}
             >
-              <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-              </svg>
               收藏
             </button>
           </div>
 
           <button
             type="submit"
-            disabled={!canSubmit}
-            className="bg-[#FF5A00] text-[#FFFFFF] border border-[#FF5A00] rounded-[9px] px-[16px] py-2 font-sans text-[12px] font-black tracking-[0.015em] antialiased cursor-pointer transition-all duration-120 flex items-center gap-1 whitespace-nowrap shadow-[0_6px_14px_rgba(255,90,0,0.32)] hover:bg-[#F05400] hover:border-[#F05400] hover:text-[#FFFFFF] hover:shadow-[0_8px_16px_rgba(255,90,0,0.38)] active:bg-[#DD4C00] active:border-[#DD4C00] disabled:opacity-45 disabled:cursor-not-allowed"
+            disabled={submitting}
+            className="bg-[#FF5A00] text-[#FFFFFF] border border-[#FF5A00] rounded-[9px] px-[16px] py-2 font-sans text-[12px] font-black tracking-[0.015em] antialiased cursor-pointer transition-all duration-120 flex items-center gap-1 whitespace-nowrap shadow-[0_6px_14px_rgba(255,90,0,0.32)] disabled:opacity-45 disabled:cursor-not-allowed"
           >
-            {urlFetching ? "正在读取页面..." : savingCount > 0 ? "添加记录" : "添加记录"}
-            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
+            {submitting ? (entryMode === "single" ? "单次录入中..." : "批量录入中...") : (entryMode === "single" ? "添加记录" : "开始批量录入")}
           </button>
         </div>
       </div>

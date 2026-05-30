@@ -40,12 +40,19 @@ const RELATION_RECALL_CHUNK_COUNT = Math.max(
 );
 const RELATION_MATCH_THRESHOLD = Math.max(
   0.3,
-  Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_MATCH_THRESHOLD || 0.62))
+  Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_MATCH_THRESHOLD || 0.58))
 );
 const EXAMPLE_HINTS = ["例如", "案例", "示例", "实战", "模板", "样例", "case", "example", "template"];
 const RELATION_CONSERVATIVE_MODE = String(process.env.INTERNALIZE_RELATION_MODE || "conservative") === "conservative";
-const RELATION_LLM_MAX_CANDIDATES = Math.max(1, Math.min(40, Number(process.env.INTERNALIZE_RELATION_LLM_MAX_CANDIDATES || 16)));
+const RELATION_LLM_MAX_CANDIDATES = Math.max(1, Math.min(60, Number(process.env.INTERNALIZE_RELATION_LLM_MAX_CANDIDATES || 24)));
 const RELATION_LLM_MIN_CONFIDENCE = Math.max(0.3, Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_LLM_MIN_CONFIDENCE || 0.56)));
+const RELATION_TYPE_THRESHOLDS = {
+  supports: Math.max(0.6, Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_MIN_SUPPORTS || 0.7))),
+  example_of: Math.max(0.6, Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_MIN_EXAMPLE_OF || 0.68))),
+  related: Math.max(0.45, Math.min(0.9, Number(process.env.INTERNALIZE_RELATION_MIN_RELATED || 0.58))),
+  weak_related: Math.max(0.35, Math.min(0.8, Number(process.env.INTERNALIZE_RELATION_MIN_WEAK || 0.48))),
+  fallback: Math.max(0.35, Math.min(0.8, Number(process.env.INTERNALIZE_RELATION_MIN_FALLBACK || 0.45))),
+};
 
 function isDeferredSummary(summary: string | null | undefined): boolean {
   const s = (summary || "").trim();
@@ -134,6 +141,63 @@ function cleanMojibakeLite(text: string): string {
     .replace(/[�]{2,}/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+const TERM_NORMALIZE: Array<{ canonical: string; variants: string[] }> = [
+  { canonical: "prompt", variants: ["prompt", "提示词", "提示语"] },
+  { canonical: "ab测试", variants: ["a/b", "ab", "ab测试", "a-b", "a b", "a/b test", "ab test"] },
+  { canonical: "agent", variants: ["agent", "智能体"] },
+  { canonical: "rag", variants: ["rag", "检索增强"] },
+];
+const GENERIC_RELATION_TERMS = new Set(["prompt", "agent", "rag", "ab测试"]);
+
+function normalizeTerm(input: string): string {
+  const raw = String(input || "").trim().toLowerCase();
+  if (!raw) return "";
+  const compact = raw.replace(/\s+/g, "").replace(/[\/\-_]/g, "");
+  for (const row of TERM_NORMALIZE) {
+    for (const v of row.variants) {
+      const cv = v.toLowerCase().replace(/\s+/g, "").replace(/[\/\-_]/g, "");
+      if (compact === cv || compact.includes(cv) || cv.includes(compact)) return row.canonical;
+    }
+  }
+  return compact;
+}
+
+function minConfidenceByType(type: string): number {
+  if (type === "supports") return RELATION_TYPE_THRESHOLDS.supports;
+  if (type === "example_of") return RELATION_TYPE_THRESHOLDS.example_of;
+  if (type === "weak_related") return RELATION_TYPE_THRESHOLDS.weak_related;
+  if (type === "fallback") return RELATION_TYPE_THRESHOLDS.fallback;
+  return RELATION_TYPE_THRESHOLDS.related;
+}
+
+function hasStrongExampleSignal(textA: string, textB: string): boolean {
+  const blob = `${textA}\n${textB}`.toLowerCase();
+  return EXAMPLE_HINTS.some((h) => blob.includes(String(h).toLowerCase()));
+}
+
+function classifyFallbackRelationType(args: {
+  sourceTitle: string;
+  sourceSummary: string;
+  targetTitle: string;
+  targetSummary: string;
+  sharedStructured: string[];
+  keywordHits: string[];
+  score: number;
+}): "related" | "weak_related" | "fallback" {
+  const shared = args.sharedStructured || [];
+  const genericOnly =
+    shared.length > 0 &&
+    shared.every((x) => GENERIC_RELATION_TERMS.has(normalizeTerm(String(x))));
+  const strongExample = hasStrongExampleSignal(
+    `${args.sourceTitle}\n${args.sourceSummary}`,
+    `${args.targetTitle}\n${args.targetSummary}`
+  );
+  if (strongExample && shared.length >= 2 && args.keywordHits.length >= 2 && args.score >= 7) return "related";
+  if (shared.length >= 2 && !genericOnly && args.score >= 6) return "related";
+  if (shared.length >= 1 || args.keywordHits.length >= 2) return "weak_related";
+  return "fallback";
 }
 
 function buildInternalizeLayeredInput(args: {
@@ -239,11 +303,13 @@ function buildNoteChunksForRetrieval(markdown: string): string[] {
   const coreChunks = chunkSourceText([coreSection, conceptSection].filter(Boolean).join("\n\n"), 900).map(
     (x) => `[内化片段]\n${x}`
   );
-  const tailChunks = chunkSourceText([inferSection, relatedSection].filter(Boolean).join("\n\n"), 900).map(
+  const relationHintChunks = chunkSourceText(relatedSection, 700).map((x) => `[关联方向片段]\n${x}`);
+  const tailChunks = chunkSourceText(inferSection, 900).map(
     (x) => `[延展片段]\n${x}`
   );
 
-  const merged = [...factChunks, ...coreChunks, ...tailChunks];
+  // 排序即权重：事实/核心/关联方向优先，延展片段靠后，避免“推断污染建边”
+  const merged = [...factChunks, ...coreChunks, ...relationHintChunks, ...tailChunks];
   const dedup: string[] = [];
   const seen = new Set<string>();
   for (const chunk of merged) {
@@ -606,16 +672,26 @@ export async function POST(request: Request) {
       let createdCount = 0;
       let embeddingRecallCandidates = 0;
       let fallbackUsed = false;
+      let llmClassifiedCount = 0;
       const chunkEmbeddings = await supabase
         .from("note_chunks")
-        .select("chunk_index, embedding")
+        .select("chunk_index, content, embedding")
         .eq("note_id", note.id)
-        .in("chunk_index", Array.from({ length: RELATION_RECALL_CHUNK_COUNT }, (_, i) => i))
+        .in("chunk_index", Array.from({ length: Math.max(RELATION_RECALL_CHUNK_COUNT * 2, 8) }, (_, i) => i))
         .order("chunk_index", { ascending: true });
 
       const embeddingRows =
-        (chunkEmbeddings.data || []).filter((r) => Boolean(r.embedding)) as Array<{
+        (chunkEmbeddings.data || [])
+          .filter((r) => Boolean(r.embedding))
+          .filter((r) => {
+            const content = String((r as { content?: unknown }).content || "");
+            // 关系召回优先“事实/核心/关联方向”，弱化“推断与延展”
+            if (content.startsWith("[延展片段]")) return false;
+            return true;
+          })
+          .slice(0, RELATION_RECALL_CHUNK_COUNT) as Array<{
           chunk_index: number;
+          content: string;
           embedding: unknown;
         }>;
 
@@ -638,6 +714,29 @@ export async function POST(request: Request) {
                 similarity,
                 source_chunk: row.chunk_index,
               });
+            }
+          }
+        }
+        // Retry with a relaxed threshold once when strict recall is empty.
+        if (mergedByNote.size === 0) {
+          for (const row of embeddingRows) {
+            const { data: recallRows } = await supabase.rpc("match_note_chunks", {
+              query_embedding: row.embedding,
+              match_threshold: Math.max(0.45, RELATION_MATCH_THRESHOLD - 0.1),
+              match_count: Math.min(120, MAX_RELATIONS_PER_NOTE * 3),
+              p_user_id: user.id,
+            });
+            for (const r of (recallRows || []) as Array<{ note_id: string; similarity?: number }>) {
+              if (!r.note_id || r.note_id === note.id) continue;
+              const similarity = Number(r.similarity ?? 0);
+              const prev = mergedByNote.get(r.note_id);
+              if (!prev || similarity > prev.similarity) {
+                mergedByNote.set(r.note_id, {
+                  note_id: r.note_id,
+                  similarity,
+                  source_chunk: row.chunk_index,
+                });
+              }
             }
           }
         }
@@ -673,11 +772,10 @@ export async function POST(request: Request) {
           }
 
           const sourceKeywords = new Set<string>([
-            ...(generatedTags || []).map((x) => String(x).trim().toLowerCase()).filter(Boolean),
-            ...(Array.isArray(concepts) ? concepts : []).map((x) => String(x).trim().toLowerCase()).filter(Boolean),
+            ...(generatedTags || []).map((x) => normalizeTerm(String(x))).filter(Boolean),
+            ...(Array.isArray(concepts) ? concepts : []).map((x) => normalizeTerm(String(x))).filter(Boolean),
           ]);
 
-          let llmClassified = 0;
           for (const match of similar as Array<{ note_id: string; similarity: number; source_chunk: number }>) {
             if (match.note_id === note.id || seenNoteIds.has(match.note_id)) continue;
             seenNoteIds.add(match.note_id);
@@ -685,8 +783,8 @@ export async function POST(request: Request) {
             const similarity = Number((match as { similarity?: number }).similarity ?? 0.72);
             const targetMeta = targetNoteMeta.get(match.note_id);
             const targetKeywords = new Set<string>([
-              ...((targetMeta?.tags || []) as string[]).map((x) => String(x).trim().toLowerCase()).filter(Boolean),
-              ...((targetMeta?.concepts || []) as string[]).map((x) => String(x).trim().toLowerCase()).filter(Boolean),
+              ...((targetMeta?.tags || []) as string[]).map((x) => normalizeTerm(String(x))).filter(Boolean),
+              ...((targetMeta?.concepts || []) as string[]).map((x) => normalizeTerm(String(x))).filter(Boolean),
             ]);
             const overlap = [...sourceKeywords].filter((k) => targetKeywords.has(k)).slice(0, 3);
             const overlapCount = overlap.length;
@@ -699,11 +797,11 @@ export async function POST(request: Request) {
             });
             const confidenceBase = overlapCount >= 2 ? similarity + 0.06 : similarity;
             const liteConfidence = Math.max(0.5, Math.min(0.98, confidenceBase));
-            let relationType: "related" | "supports" | "example_of" = liteType;
+            let relationType: "related" | "supports" | "example_of" | "weak_related" | "fallback" = liteType;
             let confidence = liteConfidence;
             let llmDecisionReason = "lite_fallback";
             let llmEvidenceSummary = "";
-            if (llmClassified < RELATION_LLM_MAX_CANDIDATES) {
+            if (llmClassifiedCount < RELATION_LLM_MAX_CANDIDATES) {
               try {
                 const decision = await classifyRelation({
                   source: {
@@ -726,10 +824,11 @@ export async function POST(request: Request) {
                   },
                   mode: RELATION_CONSERVATIVE_MODE ? "conservative" : "balanced",
                 });
-                llmClassified += 1;
+                llmClassifiedCount += 1;
                 llmDecisionReason = decision.decision_reason || "llm_decision";
                 llmEvidenceSummary = decision.evidence_summary || "";
-                if (decision.relation_type !== "none" && decision.confidence >= RELATION_LLM_MIN_CONFIDENCE) {
+                const typeFloor = minConfidenceByType(decision.relation_type);
+                if (decision.relation_type !== "none" && decision.confidence >= Math.max(RELATION_LLM_MIN_CONFIDENCE, typeFloor)) {
                   relationType = decision.relation_type;
                   confidence = Math.max(0.45, Math.min(0.99, decision.confidence));
                 } else if (RELATION_CONSERVATIVE_MODE && similarity < 0.66 && overlapCount === 0) {
@@ -814,7 +913,7 @@ export async function POST(request: Request) {
           .order("created_at", { ascending: false })
           .limit(40);
 
-        const normalize = (x: string) => x.trim().toLowerCase();
+        const normalize = (x: string) => normalizeTerm(x);
         const sourceTerms = new Set<string>([
           ...(generatedTags || []).map((x) => normalize(String(x))).filter(Boolean),
           ...(Array.isArray(concepts) ? concepts : []).map((x) => normalize(String(x))).filter(Boolean),
@@ -848,18 +947,26 @@ export async function POST(request: Request) {
         for (const item2 of scored) {
           if (existingTargets.has(item2.row.id)) continue;
           if (createdCount >= MAX_RELATIONS_PER_NOTE) break;
-          const relationType = inferRelationTypeLite({
-            overlapCount: item2.sharedStructured.length,
+          const confidence = Math.min(0.82, 0.5 + item2.score * 0.05);
+          const relationType = classifyFallbackRelationType({
             sourceTitle: note.title || "",
             sourceSummary: summary || "",
             targetTitle: item2.row.title || "",
             targetSummary: item2.row.summary || "",
+            sharedStructured: item2.sharedStructured,
+            keywordHits: item2.keywordHits,
+            score: item2.score,
           });
-          const confidence = Math.min(0.82, 0.5 + item2.score * 0.05);
+          if (
+            relationType === "fallback" &&
+            confidence < RELATION_TYPE_THRESHOLDS.fallback
+          ) {
+            continue;
+          }
           const evidenceSummary = [
             `结构重叠=${item2.sharedStructured.join("、") || "无"}`,
             `关键词命中=${item2.keywordHits.join("、") || "无"}`,
-            "判定来源=非向量兜底粗筛",
+            `判定来源=非向量兜底粗筛(${relationType})`,
           ].join("；");
 
           const ins = await supabase
@@ -894,6 +1001,8 @@ export async function POST(request: Request) {
         capture_item_id: item.id,
         note_id: note.id,
         embedding_recall_candidates: embeddingRecallCandidates,
+        llm_classified_count: llmClassifiedCount,
+        llm_max_candidates: RELATION_LLM_MAX_CANDIDATES,
         fallback_used: fallbackUsed,
         final_relations_count: createdCount,
       });

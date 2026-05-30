@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CaptureItem, CaptureItemStatus } from "@/lib/supabase/types";
 import { WaveLoader } from "@/components/shared/wave-loader";
 
@@ -77,6 +77,7 @@ export function InboxTable({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; ids: string[] } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const allSelected = items.length > 0 && selectedIds.length === items.length;
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const internalizingSet = useMemo(() => new Set(internalizingIds), [internalizingIds]);
@@ -85,6 +86,25 @@ export function InboxTable({
   function closeContextMenu() {
     setContextMenu(null);
   }
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (contextMenuRef.current?.contains(target)) return;
+      closeContextMenu();
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeContextMenu();
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [contextMenu]);
 
   function toggleOne(id: string, checked: boolean) {
     setSelectedIds((prev) => (checked ? Array.from(new Set([...prev, id])) : prev.filter((x) => x !== id)));
@@ -236,7 +256,11 @@ export function InboxTable({
         </table>
       </div>
       {contextMenu && (
-        <div className="fixed z-[900] min-w-[120px] rounded-md border border-black/15 bg-white shadow-lg py-1" style={{ left: contextMenu.x, top: contextMenu.y }}>
+        <div
+          ref={contextMenuRef}
+          className="fixed z-[900] min-w-[120px] rounded-md border border-black/15 bg-white shadow-lg py-1"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
           <button
             type="button"
             disabled={Boolean(isAnyInternalizing) || !onBatchInternalize}
