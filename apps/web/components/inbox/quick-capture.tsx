@@ -1,6 +1,6 @@
-"use client";
+﻿"use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type DragEvent, type FormEvent } from "react";
 import { Textarea } from "@/components/ui/textarea";
 
 interface AttachmentDraft {
@@ -38,6 +38,7 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
   const [singleContent, setSingleContent] = useState("");
   const [singleUnderstanding, setSingleUnderstanding] = useState("");
   const [singleFiles, setSingleFiles] = useState<File[]>([]);
+  const [singleDragActive, setSingleDragActive] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [docFiles, setDocFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -74,6 +75,14 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
     setSingleFiles((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function handleSingleDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setSingleDragActive(false);
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+    addSingleFiles(files);
+  }
+
   async function submitSingle() {
     const trimmed = singleContent.trim();
     if (!trimmed && !singleFiles.length) {
@@ -90,7 +99,7 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
       files: singleFiles.length ? singleFiles : undefined,
     };
 
-    // 先清空输入区，允许马上继续录入下一条
+    // 先清空输入区，便于立即继续录入下一条
     setSingleContent("");
     setSingleUnderstanding("");
     setSingleFiles([]);
@@ -148,7 +157,7 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
     setToastMessage(`文档批量完成：成功 ${success}，失败 ${failed}`);
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (submitting && entryMode === "batch") return;
     if (entryMode === "single") {
@@ -168,7 +177,7 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
         <div className="fixed left-1/2 top-5 -translate-x-1/2 z-[120] rounded-md bg-[#efe0c8] text-[#5a4630] text-[12px] px-3 py-2 shadow-lg flex items-center gap-2 border border-[#dcc6a1]">
           <span>{toastMessage}</span>
           <button type="button" onClick={dismissToast} className="text-[#7a6346] hover:text-[#4f3b23] cursor-pointer">
-            ×
+            关
           </button>
         </div>
       )}
@@ -227,22 +236,36 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
 
         {entryMode === "single" ? (
           <div className="space-y-2">
-            <Textarea
-              placeholder="输入文本或粘贴链接（单次录入）"
-              value={singleContent}
-              onChange={(e) => setSingleContent(e.target.value)}
-              className="w-full border-[rgba(0,0,0,0.16)] rounded-[8px] px-[10px] py-[8px] font-sans text-[11px] text-[--ink] resize-none h-[88px] leading-relaxed bg-white/50 focus:bg-white focus:border-[--innex-accent]"
-            />
-            <Textarea
-              placeholder="我的理解（选填）"
-              value={singleUnderstanding}
-              onChange={(e) => setSingleUnderstanding(e.target.value)}
-              className="w-full border-[rgba(0,0,0,0.16)] rounded-[8px] px-[10px] py-[8px] font-sans text-[11px] text-[--ink] resize-none h-[64px] leading-relaxed bg-white/50 focus:bg-white focus:border-[--innex-accent]"
-            />
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <Textarea
+                placeholder="输入文本或粘贴链接（单次录入）"
+                value={singleContent}
+                onChange={(e) => setSingleContent(e.target.value)}
+                className="w-full border-[rgba(0,0,0,0.16)] rounded-[8px] px-[10px] py-[8px] font-sans text-[11px] text-[--ink] resize-none h-[88px] leading-relaxed bg-white/50 focus:bg-white focus:border-[--innex-accent]"
+              />
+              <Textarea
+                placeholder="我的理解（选填）"
+                value={singleUnderstanding}
+                onChange={(e) => setSingleUnderstanding(e.target.value)}
+                className="w-full border-[rgba(0,0,0,0.16)] rounded-[8px] px-[10px] py-[8px] font-sans text-[11px] text-[--ink] resize-none h-[88px] leading-relaxed bg-white/50 focus:bg-white focus:border-[--innex-accent]"
+              />
+            </div>
+            <div
+              className={`flex items-center gap-2 flex-wrap rounded-[8px] border border-dashed px-2 py-1 transition-colors ${
+                singleDragActive
+                  ? "border-[--innex-accent] bg-[--innex-accent-dim]"
+                  : "border-[rgba(0,0,0,0.12)]"
+              }`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (!singleDragActive) setSingleDragActive(true);
+              }}
+              onDragLeave={() => setSingleDragActive(false)}
+              onDrop={handleSingleDrop}
+            >
               {singleFiles.map((f, i) => (
                 <span key={`${f.name}-${i}`} className="flex items-center gap-1 bg-white/60 rounded-[6px] px-2 py-0.5 text-[10px] border border-[--border-light]">
-                  <span>{f.type.startsWith("image/") ? "🖼" : "📄"}</span>
+                  <span>{f.type.startsWith("image/") ? "🖼" : "📎"}</span>
                   <span className="max-w-[140px] overflow-hidden text-ellipsis whitespace-nowrap">{f.name}</span>
                   <button type="button" onClick={() => removeSingleFile(i)} className="text-xs text-red-500">×</button>
                 </span>
@@ -266,6 +289,7 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
                 }}
                 className="hidden"
               />
+              <span className="text-[10px] text-[--text-secondary]">支持拖拽文件到这里</span>
             </div>
           </div>
         ) : batchMode === "non_doc" ? (
@@ -284,7 +308,7 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
             <div className="flex items-center gap-2 flex-wrap">
               {docFiles.map((f, i) => (
                 <span key={`${f.name}-${i}`} className="flex items-center gap-1 bg-white/60 rounded-[6px] px-2 py-0.5 text-[10px] border border-[--border-light]">
-                  <span>{f.type.startsWith("image/") ? "🖼" : "📄"}</span>
+                  <span>{f.type.startsWith("image/") ? "🖼" : "📎"}</span>
                   <span className="max-w-[140px] overflow-hidden text-ellipsis whitespace-nowrap">{f.name}</span>
                   <button type="button" onClick={() => removeBatchFile(i)} className="text-xs text-red-500">
                     ×
@@ -336,7 +360,7 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
                   : "bg-white/40 border-[rgba(0,0,0,0.16)] text-[--text-secondary]"
               }`}
             >
-              收藏
+              待内化
             </button>
           </div>
 
@@ -352,3 +376,5 @@ export function QuickCapture({ onAdd }: QuickCaptureProps) {
     </form>
   );
 }
+
+

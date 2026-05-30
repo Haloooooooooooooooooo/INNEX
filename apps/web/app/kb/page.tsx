@@ -118,16 +118,33 @@ function truncateGraphLabel(input: string, maxUnits = 15): string {
   const text = String(input || "").trim();
   if (!text) return "";
   let units = 0;
-  const out: string[] = [];
-  const parts = text.match(/[\u4e00-\u9fff]|[A-Za-z0-9]+|[^\s]/g) || [];
-  for (const part of parts) {
-    const isChineseChar = /^[\u4e00-\u9fff]$/.test(part);
-    const cost = isChineseChar ? 1 : 1; // 中文按字；非中文按“词/符号”记 1
-    if (units + cost > maxUnits) break;
-    out.push(part);
-    units += cost;
+  let idx = 0;
+  let out = "";
+  const isAsciiWordChar = (ch: string) => /[A-Za-z0-9]/.test(ch);
+  while (idx < text.length) {
+    const ch = text[idx];
+    // Non-Chinese token (word/number) counts as 1 unit.
+    if (isAsciiWordChar(ch)) {
+      let j = idx + 1;
+      while (j < text.length && isAsciiWordChar(text[j])) j += 1;
+      if (units + 1 > maxUnits) break;
+      out += text.slice(idx, j);
+      units += 1;
+      idx = j;
+      continue;
+    }
+    // Chinese character and most symbols count as 1 unit.
+    if (/\s/.test(ch)) {
+      out += ch;
+      idx += 1;
+      continue;
+    }
+    if (units + 1 > maxUnits) break;
+    out += ch;
+    units += 1;
+    idx += 1;
   }
-  const normalizedOut = out.join(" ").replace(/\s+([,.;!?])/g, "$1");
+  const normalizedOut = out.replace(/\s+/g, " ").trim();
   if (normalizedOut.length >= text.length) return normalizedOut;
   return `${normalizedOut}...`;
 }
@@ -257,7 +274,7 @@ function spreadNodes(nodes: GraphNode[], edges: GraphEdge[], width: number, heig
 
   const cx = Math.max(120, Math.floor(width / 2));
   const cy = Math.max(120, Math.floor(height / 2));
-  const compRing = Math.max(90, Math.min(width, height) * 0.2);
+  const compRing = Math.max(140, Math.min(width, height) * 0.32);
   const compCount = Math.max(components.length, 1);
   const compCenterByNode = new Map<string, { x: number; y: number }>();
 
@@ -278,7 +295,7 @@ function spreadNodes(nodes: GraphNode[], edges: GraphEdge[], width: number, heig
     const center = compCenterByNode.get(n.id) || { x: cx, y: cy };
     const rank = rankById.get(n.id) ?? 0;
     const angle = rank * 2.399963229728653;
-    const localRadius = 16 + Math.sqrt(rank + 1) * 20;
+    const localRadius = 12 + Math.sqrt(rank + 1) * 16;
     return {
       ...n,
       id: n.id,
@@ -293,13 +310,13 @@ function spreadNodes(nodes: GraphNode[], edges: GraphEdge[], width: number, heig
 const FORCE_LAYOUT = {
   type: "force" as const,
   preventOverlap: true,
-  preventOverlapPadding: 24,
+  preventOverlapPadding: 30,
   nodeSize: 22,
-  nodeSpacing: 14,
+  nodeSpacing: 20,
   linkDistance: 185,
-  nodeStrength: -620,
+  nodeStrength: -760,
   edgeStrength: 0.08,
-  gravity: 0.14,
+  gravity: 0.08,
 };
 
 function linkDistanceByRelation(edge: { relationType?: string; type?: string; confidence?: number | null }) {
@@ -569,7 +586,7 @@ export default function KbPage() {
           autoFit: "view",
           animation: false,
           data: { nodes: [], edges: [] },
-          node: { style: { labelText: (d: any) => truncateGraphLabel(String(d.label || ""), 15), labelPlacement: "bottom", labelFontSize: 9, labelFill: (d: any) => d.labelFill || "#2f2f2f", labelFontWeight: (d: any) => d.labelFontWeight || 400, fill: (d: any) => d.nodeFill || "#F15A24", fillOpacity: (d: any) => d.nodeFillOpacity ?? 0.2, stroke: (d: any) => d.nodeStroke || "#F15A24", lineWidth: (d: any) => d.nodeLineWidth ?? 1.5, shadowColor: (d: any) => d.shadowColor || "transparent", shadowBlur: (d: any) => d.shadowBlur ?? 0, size: (d: any) => 16 + Math.min((d.degree || 0) * 2, 18) } },
+          node: { style: { labelText: (d: any) => truncateGraphLabel(String(d.label || ""), 15), labelPlacement: "bottom", labelFontSize: 8, labelFill: (d: any) => d.labelFill || "#2f2f2f", labelFontWeight: (d: any) => d.labelFontWeight || 400, fill: (d: any) => d.nodeFill || "#F15A24", fillOpacity: (d: any) => d.nodeFillOpacity ?? 0.2, stroke: (d: any) => d.nodeStroke || "#F15A24", lineWidth: (d: any) => d.nodeLineWidth ?? 1.5, shadowColor: (d: any) => d.shadowColor || "transparent", shadowBlur: (d: any) => d.shadowBlur ?? 0, size: (d: any) => 16 + Math.min((d.degree || 0) * 2, 18) } },
           edge: { style: { stroke: (d: any) => d.edgeStroke || relationColorByConfidence(d.relationType || "related", d.confidence), strokeOpacity: (d: any) => d.edgeOpacity ?? 0.65, lineWidth: (d: any) => d.edgeLineWidth ?? 1.4, lineDash: (d: any) => d.edgeLineDash } },
           layout: FORCE_LAYOUT,
           behaviors: ["drag-canvas", "zoom-canvas", "drag-element"],

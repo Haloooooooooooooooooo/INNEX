@@ -42,4 +42,22 @@ http://xhslink.com/o/6uleNhVzUyT
 
 那最后呢，我再补充一点，评估准确率其实是不能脱离用户体验的。比如某些场景下模型准确率的数值并不低，但是用户仍然频繁反馈识别不准，可能是因为模型识别的意图和用户实际的诉求不匹配，这时候要重新校准意图分类体系，而非单纯地去优化模型。所以我们的最终目标是业务指标达标，比如客服进线率下降、用户的满意度提升、导购的转化率上涨，那这些业务结果才是验证意图识别效果的终极标准，准确率只是实现业务目标的关键过程指标。
 ----
-http://xhslink.com/o/7ASaeSYOekM
+http://xhslink.com/o/I5Y4xPltX2
+----
+http://xhslink.com/o/8BPoUY2AvIG
+----
+http://xhslink.com/o/8BPoUY2AvIG
+----
+http://xhslink.com/o/72K9PyiqeEW
+----
+http://xhslink.com/o/7rSgHwF7OHd
+----
+http://xhslink.com/o/McfTtzEFqo
+----
+http://xhslink.com/o/2jY7mcW3WFH
+----
+http://xhslink.com/o/9BezxhB493C
+----
+http://xhslink.com/o/4x4HuAyCmsp
+----
+http://xhslink.com/o/oGLpg89l8h

@@ -32,7 +32,7 @@ const MIN_INTERNALIZE_SOURCE_CHARS = 120;
 const XIAOHONGSHU_INLINE_OCR_LIMIT = 5;
 const MAX_RELATIONS_PER_NOTE = Math.max(
   1,
-  Math.min(50, Number(process.env.INTERNALIZE_MAX_RELATIONS_PER_NOTE || 30))
+  Math.min(50, Number(process.env.INTERNALIZE_MAX_RELATIONS_PER_NOTE || 24))
 );
 const RELATION_RECALL_CHUNK_COUNT = Math.max(
   1,
@@ -40,11 +40,15 @@ const RELATION_RECALL_CHUNK_COUNT = Math.max(
 );
 const RELATION_MATCH_THRESHOLD = Math.max(
   0.3,
-  Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_MATCH_THRESHOLD || 0.58))
+  Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_MATCH_THRESHOLD || 0.56))
 );
 const EXAMPLE_HINTS = ["例如", "案例", "示例", "实战", "模板", "样例", "case", "example", "template"];
 const RELATION_CONSERVATIVE_MODE = String(process.env.INTERNALIZE_RELATION_MODE || "conservative") === "conservative";
-const RELATION_LLM_MAX_CANDIDATES = Math.max(1, Math.min(60, Number(process.env.INTERNALIZE_RELATION_LLM_MAX_CANDIDATES || 24)));
+const RELATION_LLM_MAX_CANDIDATES = Math.max(1, Math.min(60, Number(process.env.INTERNALIZE_RELATION_LLM_MAX_CANDIDATES || 30)));
+const MAX_FALLBACK_RELATIONS_PER_NOTE = Math.max(
+  0,
+  Math.min(20, Number(process.env.INTERNALIZE_MAX_FALLBACK_RELATIONS_PER_NOTE || 6))
+);
 const RELATION_LLM_MIN_CONFIDENCE = Math.max(0.3, Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_LLM_MIN_CONFIDENCE || 0.56)));
 const RELATION_TYPE_THRESHOLDS = {
   supports: Math.max(0.6, Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_MIN_SUPPORTS || 0.7))),
@@ -148,8 +152,13 @@ const TERM_NORMALIZE: Array<{ canonical: string; variants: string[] }> = [
   { canonical: "ab测试", variants: ["a/b", "ab", "ab测试", "a-b", "a b", "a/b test", "ab test"] },
   { canonical: "agent", variants: ["agent", "智能体"] },
   { canonical: "rag", variants: ["rag", "检索增强"] },
+  { canonical: "产品经理", variants: ["产品经理", "product manager", "pm"] },
+  { canonical: "ai", variants: ["ai", "人工智能", "大模型", "llm", "模型"] },
+  { canonical: "claude", variants: ["claude", "claude code"] },
 ];
 const GENERIC_RELATION_TERMS = new Set(["prompt", "agent", "rag", "ab测试"]);
+const DYNAMIC_TERM_MAX = Math.max(20, Math.min(120, Number(process.env.INTERNALIZE_DYNAMIC_TERM_MAX || 80)));
+const DYNAMIC_TERM_MIN_FREQ = Math.max(2, Math.min(10, Number(process.env.INTERNALIZE_DYNAMIC_TERM_MIN_FREQ || 2)));
 
 function normalizeTerm(input: string): string {
   const raw = String(input || "").trim().toLowerCase();
@@ -162,6 +171,54 @@ function normalizeTerm(input: string): string {
     }
   }
   return compact;
+}
+
+function extractNormalizedTerms(text: string, max = 48): string[] {
+  const raw = String(text || "").toLowerCase();
+  const tokens = raw.match(/[a-z0-9\u4e00-\u9fa5]{2,24}/g) || [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const t of tokens) {
+    const n = normalizeTerm(t);
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+async function buildUserDynamicLexicon(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  excludeNoteId?: string
+): Promise<Set<string>> {
+  const { data: rows } = await supabase
+    .from("notes")
+    .select("id, title, summary, tags, concepts")
+    .eq("user_id", userId)
+    .order("updated_at", { ascending: false })
+    .limit(200);
+  const freq = new Map<string, number>();
+  for (const row of rows || []) {
+    if (excludeNoteId && row.id === excludeNoteId) continue;
+    const terms = new Set<string>([
+      ...extractNormalizedTerms(String(row.title || ""), 18),
+      ...extractNormalizedTerms(String(row.summary || ""), 18),
+      ...((Array.isArray(row.tags) ? row.tags : []) as string[]).map((x) => normalizeTerm(String(x))).filter(Boolean),
+      ...((Array.isArray(row.concepts) ? row.concepts : []) as string[]).map((x) => normalizeTerm(String(x))).filter(Boolean),
+    ]);
+    for (const t of terms) {
+      if (!t || t.length < 2) continue;
+      freq.set(t, (freq.get(t) || 0) + 1);
+    }
+  }
+  const sorted = [...freq.entries()]
+    .filter(([t, c]) => c >= DYNAMIC_TERM_MIN_FREQ && !GENERIC_RELATION_TERMS.has(t))
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, DYNAMIC_TERM_MAX)
+    .map(([t]) => t);
+  return new Set(sorted);
 }
 
 function minConfidenceByType(type: string): number {
@@ -185,7 +242,7 @@ function classifyFallbackRelationType(args: {
   sharedStructured: string[];
   keywordHits: string[];
   score: number;
-}): "related" | "weak_related" | "fallback" {
+}): "weak_related" | "fallback" {
   const shared = args.sharedStructured || [];
   const genericOnly =
     shared.length > 0 &&
@@ -194,8 +251,8 @@ function classifyFallbackRelationType(args: {
     `${args.sourceTitle}\n${args.sourceSummary}`,
     `${args.targetTitle}\n${args.targetSummary}`
   );
-  if (strongExample && shared.length >= 2 && args.keywordHits.length >= 2 && args.score >= 7) return "related";
-  if (shared.length >= 2 && !genericOnly && args.score >= 6) return "related";
+  if (strongExample && shared.length >= 2 && args.keywordHits.length >= 2 && args.score >= 7) return "weak_related";
+  if (shared.length >= 2 && !genericOnly && args.score >= 6) return "weak_related";
   if (shared.length >= 1 || args.keywordHits.length >= 2) return "weak_related";
   return "fallback";
 }
@@ -612,36 +669,88 @@ export async function POST(request: Request) {
       );
     }
 
-    stage = "insert_note";
-    const { data: note, error: noteError } = await supabase
+    stage = "upsert_note";
+    const notePayload = {
+      user_id: user.id,
+      capture_item_id: item.id,
+      title: item.title,
+      content: markdown,
+      summary: summary.trim(),
+      concepts,
+      tags: generatedTags,
+      source: item.source,
+      source_url: item.source_url || null,
+      updated_at: new Date().toISOString(),
+    };
+    const { data: existingNote } = await supabase
       .from("notes")
-      .insert({
-        user_id: user.id,
-        capture_item_id: item.id,
-        title: item.title,
-        content: markdown,
-        summary: summary.trim(),
-        concepts,
-        tags: generatedTags,
-        source: item.source,
-        source_url: item.source_url || null,
-      })
-      .select()
-      .single();
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("capture_item_id", item.id)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    if (noteError || !note) {
+    let note:
+      | {
+          id: string;
+          title?: string | null;
+          content?: string | null;
+          summary?: string | null;
+          source?: string | null;
+          source_url?: string | null;
+          capture_item_id?: string | null;
+          created_at?: string;
+        }
+      | null = null;
+    if (existingNote?.id) {
+      const { data: updatedNote, error: updateErr } = await supabase
+        .from("notes")
+        .update(notePayload)
+        .eq("id", existingNote.id)
+        .eq("user_id", user.id)
+        .select()
+        .single();
+      if (updateErr || !updatedNote) {
+        return NextResponse.json(
+          errorBody(
+            ERROR_CODES.internalize_failed,
+            updateErr?.message || "Failed to update note",
+            traceId
+          ),
+          { status: 500 }
+        );
+      }
+      note = updatedNote as any;
+    } else {
+      const { data: insertedNote, error: insertErr } = await supabase
+        .from("notes")
+        .insert(notePayload)
+        .select()
+        .single();
+      if (insertErr || !insertedNote) {
+        return NextResponse.json(
+          errorBody(
+            ERROR_CODES.internalize_failed,
+            insertErr?.message || "Failed to create note",
+            traceId
+          ),
+          { status: 500 }
+        );
+      }
+      note = insertedNote as any;
+    }
+    if (!note) {
       return NextResponse.json(
-        errorBody(
-          ERROR_CODES.internalize_failed,
-          noteError?.message || "Failed to create note",
-          traceId
-        ),
+        errorBody(ERROR_CODES.internalize_failed, "Failed to upsert note", traceId),
         { status: 500 }
       );
     }
 
     const chunks = buildNoteChunksForRetrieval(markdown);
     stage = "embed_chunks";
+    // Re-internalize should refresh chunk set, avoiding stale duplicate retrieval vectors.
+    await supabase.from("note_chunks").delete().eq("note_id", note.id).eq("user_id", user.id);
     for (let i = 0; i < chunks.length; i++) {
       try {
         const embedding = await withRetry(() => generateEmbedding(chunks[i]), {
@@ -669,10 +778,23 @@ export async function POST(request: Request) {
     const relations: unknown[] = [];
     stage = "build_relations";
     try {
+      // Re-internalize should regenerate outgoing auto edges from this note.
+      await supabase
+        .from("note_relations")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("source_note_id", note.id)
+        .eq("is_auto_generated", true);
+
       let createdCount = 0;
       let embeddingRecallCandidates = 0;
       let fallbackUsed = false;
       let llmClassifiedCount = 0;
+      let fallbackEdgesCount = 0;
+      let embeddingOrLlmEdgesCount = 0;
+      let semanticSeedCandidates = 0;
+      let semanticSeedEdgesCount = 0;
+      const userDynamicLexicon = await buildUserDynamicLexicon(supabase, user.id, note.id);
       const chunkEmbeddings = await supabase
         .from("note_chunks")
         .select("chunk_index, content, embedding")
@@ -891,8 +1013,146 @@ export async function POST(request: Request) {
             if (rel) {
               relations.push(rel);
               createdCount += 1;
+              embeddingOrLlmEdgesCount += 1;
             }
             if (seenNoteIds.size >= MAX_RELATIONS_PER_NOTE) break;
+          }
+        }
+      }
+
+      // Semantic-seed recall: when embedding recall is sparse/unstable, use lightweight
+      // semantic candidates from note metadata and let LLM do strong relation typing.
+      if (createdCount < MAX_RELATIONS_PER_NOTE && llmClassifiedCount < RELATION_LLM_MAX_CANDIDATES) {
+        const existingTargets = new Set<string>();
+        for (const r of relations as Array<{ target_note_id?: string }>) {
+          if (r?.target_note_id) existingTargets.add(r.target_note_id);
+        }
+
+        const { data: seedRows } = await supabase
+          .from("notes")
+          .select("id, title, summary, tags, concepts")
+          .eq("user_id", user.id)
+          .neq("id", note.id)
+          .order("created_at", { ascending: false })
+          .limit(100);
+
+        const sourceTitleTerms = extractNormalizedTerms(note.title || "", 24);
+        const sourceSummaryTerms = extractNormalizedTerms(summary || "", 30);
+        const sourceTagTerms = (generatedTags || []).map((x) => normalizeTerm(String(x))).filter(Boolean);
+        const sourceConceptTerms = (Array.isArray(concepts) ? concepts : [])
+          .map((x) => normalizeTerm(String(x)))
+          .filter(Boolean);
+        const sourceTerms = new Set<string>([
+          ...sourceTitleTerms,
+          ...sourceSummaryTerms,
+          ...sourceTagTerms,
+          ...sourceConceptTerms,
+        ]);
+
+        const seedScored = (seedRows || [])
+          .map((row) => {
+            const targetTitleTerms = extractNormalizedTerms(row.title || "", 24);
+            const targetSummaryTerms = extractNormalizedTerms(row.summary || "", 30);
+            const targetTagTerms = ((Array.isArray(row.tags) ? row.tags : []) as string[])
+              .map((x) => normalizeTerm(String(x)))
+              .filter(Boolean);
+            const targetConceptTerms = ((Array.isArray(row.concepts) ? row.concepts : []) as string[])
+              .map((x) => normalizeTerm(String(x)))
+              .filter(Boolean);
+            const targetTerms = new Set<string>([
+              ...targetTitleTerms,
+              ...targetSummaryTerms,
+              ...targetTagTerms,
+              ...targetConceptTerms,
+            ]);
+            const overlap = [...sourceTerms].filter((t) => targetTerms.has(t)).slice(0, 10);
+            const nonGenericOverlap = overlap.filter((t) => !GENERIC_RELATION_TERMS.has(t));
+            const titleOverlap = sourceTitleTerms.filter((t) => targetTitleTerms.includes(t)).slice(0, 4);
+            const dynamicOverlap = overlap.filter((t) => userDynamicLexicon.has(t));
+            const fallbackAiBoost = overlap.some((t) => ["ai", "agent", "claude", "prompt", "产品经理"].includes(t)) ? 1 : 0;
+            // User dynamic lexicon dominates; fixed-term boost is fallback only.
+            const score =
+              dynamicOverlap.length * 3 +
+              titleOverlap.length * 3 +
+              nonGenericOverlap.length * 1.5 +
+              Math.min(2, overlap.length) +
+              fallbackAiBoost;
+            return { row, score, overlap, nonGenericOverlap, titleOverlap, dynamicOverlap };
+          })
+          .filter((x) => x.score >= 2)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, Math.min(20, MAX_RELATIONS_PER_NOTE));
+
+        semanticSeedCandidates = seedScored.length;
+
+        for (const s of seedScored) {
+          if (createdCount >= MAX_RELATIONS_PER_NOTE) break;
+          if (llmClassifiedCount >= RELATION_LLM_MAX_CANDIDATES) break;
+          if (existingTargets.has(s.row.id)) continue;
+
+          const pseudoSimilarity = Math.max(0.5, Math.min(0.86, 0.5 + s.score * 0.05));
+          try {
+            const decision = await classifyRelation({
+              source: {
+                title: note.title || "",
+                summary: summary || "",
+                tags: generatedTags || [],
+                concepts: concepts || [],
+              },
+              target: {
+                title: s.row.title || "",
+                summary: s.row.summary || "",
+                tags: Array.isArray(s.row.tags) ? (s.row.tags as string[]) : [],
+                concepts: Array.isArray(s.row.concepts) ? (s.row.concepts as string[]) : [],
+              },
+              recall: {
+                similarity: pseudoSimilarity,
+                overlap: s.overlap,
+                keywordHits: [...s.titleOverlap, ...s.nonGenericOverlap].slice(0, 4),
+              },
+              mode: RELATION_CONSERVATIVE_MODE ? "conservative" : "balanced",
+            });
+            llmClassifiedCount += 1;
+
+            // Semantic-seed path only accepts strong/medium relations, not weak/fallback.
+            if (
+              !["related", "supports", "example_of"].includes(decision.relation_type) ||
+              decision.confidence < Math.max(RELATION_LLM_MIN_CONFIDENCE, minConfidenceByType(decision.relation_type))
+            ) {
+              continue;
+            }
+
+            const ins = await supabase
+              .from("note_relations")
+              .insert({
+                user_id: user.id,
+                source_note_id: note.id,
+                target_note_id: s.row.id,
+                relation_type: decision.relation_type,
+                confidence: Math.max(0.45, Math.min(0.99, decision.confidence)),
+                evidence: {
+                  stage: "phase4_relation_generation",
+                  method: "semantic_seed_llm",
+                  seed_score: s.score,
+                  similarity: pseudoSimilarity,
+                  shared_concepts: s.overlap,
+                  dynamic_overlap: s.dynamicOverlap,
+                  evidence_summary: decision.evidence_summary || `语义种子候选重排命中（score=${s.score}）`,
+                },
+                is_auto_generated: true,
+              })
+              .select()
+              .single();
+
+            if (ins.data) {
+              relations.push(ins.data);
+              createdCount += 1;
+              embeddingOrLlmEdgesCount += 1;
+              semanticSeedEdgesCount += 1;
+              existingTargets.add(s.row.id);
+            }
+          } catch {
+            // keep best-effort
           }
         }
       }
@@ -940,13 +1200,25 @@ export async function POST(request: Request) {
             const score = sharedStructured.length * 2 + keywordHits.length;
             return { row, score, sharedStructured, keywordHits };
           })
-          .filter((x) => x.score >= 2)
+          .filter((x) => x.score >= 3)
           .sort((a, b) => b.score - a.score)
           .slice(0, MAX_RELATIONS_PER_NOTE);
+
+        const fallbackBudget = Math.max(
+          0,
+          Math.min(
+            MAX_FALLBACK_RELATIONS_PER_NOTE,
+            MAX_RELATIONS_PER_NOTE - createdCount
+          )
+        );
+        let fallbackInserted = 0;
 
         for (const item2 of scored) {
           if (existingTargets.has(item2.row.id)) continue;
           if (createdCount >= MAX_RELATIONS_PER_NOTE) break;
+          if (fallbackInserted >= fallbackBudget) break;
+          const hasFallbackEvidence = item2.sharedStructured.length >= 1 || item2.keywordHits.length >= 2;
+          if (!hasFallbackEvidence) continue;
           const confidence = Math.min(0.82, 0.5 + item2.score * 0.05);
           const relationType = classifyFallbackRelationType({
             sourceTitle: note.title || "",
@@ -992,6 +1264,8 @@ export async function POST(request: Request) {
             relations.push(ins.data);
             createdCount += 1;
             existingTargets.add(item2.row.id);
+            fallbackEdgesCount += 1;
+            fallbackInserted += 1;
           }
         }
 
@@ -1001,8 +1275,13 @@ export async function POST(request: Request) {
         capture_item_id: item.id,
         note_id: note.id,
         embedding_recall_candidates: embeddingRecallCandidates,
+        user_dynamic_lexicon_size: userDynamicLexicon.size,
+        semantic_seed_candidates: semanticSeedCandidates,
+        semantic_seed_edges_count: semanticSeedEdgesCount,
         llm_classified_count: llmClassifiedCount,
         llm_max_candidates: RELATION_LLM_MAX_CANDIDATES,
+        embedding_or_llm_edges_count: embeddingOrLlmEdgesCount,
+        fallback_edges_count: fallbackEdgesCount,
         fallback_used: fallbackUsed,
         final_relations_count: createdCount,
       });

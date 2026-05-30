@@ -391,3 +391,43 @@
 | R5-C01 | 全部边 | 证据弱 | `evidence.method` 全为 fallback，未见 embedding/LLM 主导边 | `innex-graph-1780121611221.json` | `graph_evidence_summary_weak` | 提升向量召回命中并强制记录 LLM 成功判型率 | 已确认待修复 |
 | R5-C02 | Prompt/Agent 主题簇 | 漏连 | 主题相关节点存在但强边数量偏少，整体偏弱连通 | 图谱截图 + JSON边分布 | `graph_missing_relation` | 放宽 embedding 首轮召回并提高结构化证据权重 | 已确认待修复 |
 | R5-C03 | 远离节点（如技术栈/Java） | 分簇可读性风险 | 节点位置已分离，但由于边类型单一，难判断“真正无关”还是“召回不足” | 图谱截图 | `graph_confidence_misaligned` | 增加“无关系判定日志”与阈值回放 | 待分析 |
+
+---
+
+## R6（2026-05-30，JSON正式评测）
+
+输入：
+- `innex-graph-1780126939352.json`
+
+核心指标：
+- `node_count=27`
+- `edge_count=19`
+- `relationTypeCounts`（可读项）：
+  - `related=7`
+  - `weak_related=12`
+  - `supports=0`（导出中未读到）
+  - `example_of=0`（导出中未读到）
+- `confidenceStats`：
+  - `high=11`
+  - `mid=8`
+  - `low=0`
+- `evidence.method`：
+  - `semantic_seed_llm=7`
+  - `structured_overlap_fallback=12`
+  - `embedding_similarity_plus_overlap=0`
+
+本轮结论：
+- 图谱状态：`部分通过（较R5有进步）`
+
+评价：
+1. 主链路开始生效：`semantic_seed_llm=7`，不再是“全fallback”。
+2. 但 fallback 仍偏高（`12/19`），弱边仍占主导。
+3. 视觉上标签重叠严重，影响可读性；这是布局/标注密度问题，不完全是关系质量问题。
+
+### R6 Badcase
+
+| Case ID | 样本/边 | 问题类型 | 现象描述 | 证据（日志/JSON/截图） | 原因标签（待确认） | 修复动作（待确认） | 状态 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| R6-C01 | 全局边方法分布 | 证据弱 | fallback 仍高，占比 `12/19` | `innex-graph-1780126939352.json` | `graph_evidence_summary_weak` | 继续提高主链路候选命中，压降 fallback 入库比重 | 已确认待修复 |
+| R6-C02 | 多节点标签 | 可读性问题 | 标签重叠，肉眼难判断簇结构 | 图谱截图 | `graph_confidence_misaligned` | 引入标签避让/按缩放级别显示标签 | 已确认待修复 |
+| R6-C03 | 强关系类型 | 类型覆盖不足 | `supports/example_of` 为空，关系表达维度不足 | JSON 关系类型分布 | `graph_wrong_relation` | 在主链路判型中加强 supports/example_of 判定触发 | 待分析 |
