@@ -558,3 +558,34 @@
 - R7-C01（Q2 召回偏题）：本轮已加同会话主题重排，__待 R9-QA 确认关闭__
 - R7-C02（Q3/Q5 follow-up 断链）：本轮已加续问指代复用 + Stage 3.7 直接复用，__待 R9-QA 确认关闭__
 - R7-C03（Q7 拒答过硬）：上一轮已加无关联兜底，__待 R9-QA 确认关闭__
+
+---
+
+## R10（2026-05-31，embedding 维度修复后首次有效向量评测）
+
+输入：`innex-graph-1780201494614.json`（注：新样本批次，非 S01–S11；但为 embedding 修复后首个向量召回真正生效的版本，记录价值高）。
+
+核心指标：
+- `node_count=20`、`edge_count=165`（图密度约 87%，近乎全连）
+- `relationTypeCounts`：`related=157`、`example_of=8`、`weak_related/fallback=0`
+- `confidenceStats`：high=6 / mid=140 / low=19（高度集中在 0.6~0.65）
+- `evidence.method`：`embedding_similarity_plus_overlap=165`（100%）
+
+结论：图谱状态 `部分通过（过度连接）`。
+- 重大进展：两个历史根因均确认修复——(a) embedding 维度（向量召回从全 fallback 变 100% 向量主链路）；(b) 判型 JSON 截断（出现 example_of，R8/R9 一直为 0）。
+- 新问题：从“全弱边”荡到“全连接”，related 占 95%。根因是参数未跟上召回复活：bge-m3 相似度普遍堆在 0.58~0.65，全越过 related 默认阈值 0.58。
+
+阈值敏感度（用于校准）：confidence>=0.60→146 / >=0.63→112 / >=0.65→87 / >=0.68→35。
+
+### R10 Badcase
+
+| Case ID | 样本/边 | 问题类型 | 现象描述 | 证据 | 原因标签 | 修复动作 | 状态 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| R10-C01 | 全局 | 过度连接 | 20 节点 165 边，密度 87%，近乎全连 | JSON edgeCount=165 | `graph_over_connection`（新） | related 阈值 0.58→0.63（已落地，待重内化生效） | 已落地待回归 |
+| R10-C02 | 全局关系类型 | 类型单一 | related 占 157/165，supports/weak 缺位 | JSON relationTypeCounts | `graph_wrong_relation` | 阈值收紧后中等边降级，期待类型分布变丰富 | 已落地待回归 |
+
+### R10 关闭确认
+- R8-C02（fallback 主导）：**已关闭** — R10 fallback 占比 0，全部走 embedding 向量主链路。
+- R9 维度坏 → 已修复（migration 010），R10 验证向量召回生效。
+
+下一轮（R11）回填点：重内化后看密度是否降到 ~55-60%、related 占比是否下降、supports/example_of/weak 是否出现（颜色是否变丰富）、节点大小按强度是否可读。

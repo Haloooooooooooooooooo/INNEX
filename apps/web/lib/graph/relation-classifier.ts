@@ -53,13 +53,33 @@ function safeJsonParse(text: string): unknown {
     return JSON.parse(raw);
   } catch {
     const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[0]);
-    } catch {
-      return null;
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch {
+        // fall through to field-level salvage
+      }
     }
+    // Salvage from truncated JSON: the model emits relation_type/confidence early,
+    // before the long Chinese evidence_summary that often gets cut by max_tokens.
+    return salvageDecisionFields(raw);
   }
+}
+
+// Best-effort extraction of relation_type/confidence from a truncated/invalid JSON string.
+// Returns null only when relation_type cannot be recovered.
+function salvageDecisionFields(raw: string): Record<string, unknown> | null {
+  const typeMatch = raw.match(/"relation_type"\s*:\s*"([a-z_]+)"/i);
+  if (!typeMatch) return null;
+  const confMatch = raw.match(/"confidence"\s*:\s*([0-9]*\.?[0-9]+)/);
+  const evidenceMatch = raw.match(/"evidence_summary"\s*:\s*"([^"]*)"/);
+  const reasonMatch = raw.match(/"decision_reason"\s*:\s*"([^"]*)"/);
+  return {
+    relation_type: typeMatch[1],
+    confidence: confMatch ? Number(confMatch[1]) : DEFAULT_DECISION.confidence,
+    evidence_summary: evidenceMatch ? evidenceMatch[1] : "由截断输出兜底解析",
+    decision_reason: reasonMatch ? reasonMatch[1] : "salvaged_from_truncated_json",
+  };
 }
 
 function buildSystemPrompt(mode: "conservative" | "balanced"): string {
@@ -113,7 +133,22 @@ export async function classifyRelation(input: RelationClassifierInput): Promise<
     provider,
     model,
     temperature: 0.05,
-    maxOutputTokens: 220,
+    maxOutputTokens: 600,
   });
-  return normalizeDecision(safeJsonParse(raw));
+  const decision = normalizeDecision(safeJsonParse(raw));
+  if (process.env.RELATION_CLASSIFIER_DEBUG === "1") {
+    console.info("[relation-classifier] debug", {
+      source_title: (input.source.title || "").slice(0, 40),
+      target_title: (input.target.title || "").slice(0, 40),
+      mode,
+      similarity: input.recall.similarity,
+      overlap: input.recall.overlap,
+      keyword_hits: input.recall.keywordHits,
+      decided_type: decision.relation_type,
+      decided_confidence: decision.confidence,
+      decided_reason: decision.decision_reason,
+      raw_output: (raw || "").slice(0, 300),
+    });
+  }
+  return decision;
 }

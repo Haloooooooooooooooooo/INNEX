@@ -52,6 +52,9 @@ const MAX_FALLBACK_RELATIONS_PER_NOTE = Math.max(
   Math.min(20, Number(process.env.INTERNALIZE_MAX_FALLBACK_RELATIONS_PER_NOTE || 6))
 );
 const RELATION_LLM_MIN_CONFIDENCE = Math.max(0.3, Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_LLM_MIN_CONFIDENCE || 0.56)));
+// When no LLM verdict is available (budget exhausted / call failed) on the embedding-recall
+// path, only keep the lite-default edge if embedding similarity clears this higher floor.
+const RELATION_LITE_SIMILARITY_FLOOR = Math.max(0.5, Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_LITE_SIM_FLOOR || 0.72)));
 const RELATION_TYPE_THRESHOLDS = {
   supports: Math.max(0.6, Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_MIN_SUPPORTS || 0.7))),
   example_of: Math.max(0.6, Math.min(0.95, Number(process.env.INTERNALIZE_RELATION_MIN_EXAMPLE_OF || 0.68))),
@@ -967,10 +970,22 @@ export async function POST(request: Request) {
               llmDecisionReason = decision.decision_reason || "llm_decision";
               llmEvidenceSummary = decision.evidence_summary || "";
               const typeFloor = minConfidenceByType(decision.relation_type);
-              if (decision.relation_type !== "none" && decision.confidence >= Math.max(RELATION_LLM_MIN_CONFIDENCE, typeFloor)) {
-                relationType = decision.relation_type;
-                confidence = Math.max(0.45, Math.min(0.99, decision.confidence));
-              } else if (RELATION_CONSERVATIVE_MODE && similarity < 0.66 && overlapCount === 0) {
+              // LLM judgment has VETO power: do not build an edge when the model says the
+              // notes are unrelated, or when its confidence is below the per-type threshold.
+              // (Previously the edge was still inserted with the lite default, so related
+              //  threshold never actually gated the embedding-recall path -> over-connection.)
+              if (decision.relation_type === "none") {
+                continue;
+              }
+              if (decision.confidence < Math.max(RELATION_LLM_MIN_CONFIDENCE, typeFloor)) {
+                continue;
+              }
+              relationType = decision.relation_type;
+              confidence = Math.max(0.45, Math.min(0.99, decision.confidence));
+            } else {
+              // No LLM verdict (budget exhausted or call failed): keep the lite default, but
+              // require a higher embedding similarity floor so we don't blindly connect everything.
+              if (similarity < RELATION_LITE_SIMILARITY_FLOOR) {
                 continue;
               }
             }

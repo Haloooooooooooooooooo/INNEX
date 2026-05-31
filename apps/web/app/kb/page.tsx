@@ -470,6 +470,24 @@ export default function KbPage() {
     return out;
   }, [graphData.nodes, filteredEdges]);
 
+  // Node degree from the currently-filtered edges (updates with type/confidence filters).
+  // Drives node SIZE: more connections -> bigger node (high discrimination, intuitive hubs).
+  const nodeDegreeMap = useMemo(() => {
+    const deg = new Map<string, number>();
+    for (const n of graphData.nodes) deg.set(n.id, 0);
+    for (const e of filteredEdges) {
+      deg.set(e.source, (deg.get(e.source) || 0) + 1);
+      deg.set(e.target, (deg.get(e.target) || 0) + 1);
+    }
+    return deg;
+  }, [graphData.nodes, filteredEdges]);
+
+  const maxNodeDegree = useMemo(() => {
+    let m = 0;
+    for (const v of nodeDegreeMap.values()) m = Math.max(m, v);
+    return m;
+  }, [nodeDegreeMap]);
+
   useEffect(() => {
     const profiles = nodeColorProfileRef.current;
     const existingNodeIds = new Set(graphData.nodes.map((n) => n.id));
@@ -699,7 +717,16 @@ export default function KbPage() {
                   : highlightedByHover
                     ? 16
                     : 7 + strength * 7,
-                size: highlightedBySelect ? 28 + pulse * 2 : highlightedByHover ? 24 : 20,
+                // Base node size scales with degree (connection count) relative to the
+                // busiest node, so hubs are clearly bigger. Highlight/select enlarge on top.
+                size: (() => {
+                  const degree = nodeDegreeMap.get(n.id) ?? 0;
+                  const norm = maxNodeDegree > 0 ? degree / maxNodeDegree : 0; // 0..1
+                  const baseSize = 14 + Math.round(norm * 26); // 14..40
+                  if (highlightedBySelect) return baseSize + 8 + pulse * 2;
+                  if (highlightedByHover) return baseSize + 4;
+                  return baseSize;
+                })(),
               };
             })
             : spreadNodes(nodes, edges, rect.width, rect.height).map((n: any) => ({

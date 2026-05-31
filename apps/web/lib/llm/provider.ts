@@ -62,7 +62,7 @@ export const LLM_ROUTING = {
   },
 };
 
-export const EMBEDDING_DIMENSIONS = 1536;
+export const EMBEDDING_DIMENSIONS = 1024;
 
 export const EMBEDDING_ENDPOINT: EmbeddingEndpointConfig = {
   baseURL: process.env.EMBEDDING_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",

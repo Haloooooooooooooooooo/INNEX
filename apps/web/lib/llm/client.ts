@@ -2,6 +2,7 @@
 import { embed } from "ai";
 import {
   EMBEDDING_ENDPOINT,
+  EMBEDDING_DIMENSIONS,
   LLM_PROVIDERS,
   getChatTarget,
   getEmbeddingTarget,
@@ -227,6 +228,7 @@ export async function generateEmbedding(
       model: embeddingClient.embedding(target.model),
       value: text,
     });
+    warnOnEmbeddingDimMismatch(embedding, target.model);
     return embedding;
   }
 
@@ -238,7 +240,22 @@ export async function generateEmbedding(
     model: clients[target.provider].embedding(target.model),
     value: text,
   });
+  warnOnEmbeddingDimMismatch(embedding, target.model);
   return embedding;
+}
+
+// Guards against the silent failure where the embedding model's output dimension does
+// not match the DB vector(N) columns: pgvector rejects the insert and it gets swallowed,
+// leaving embeddings all-NULL and vector recall dead. Log loudly instead of failing silently.
+function warnOnEmbeddingDimMismatch(embedding: number[], model: string): void {
+  if (Array.isArray(embedding) && embedding.length !== EMBEDDING_DIMENSIONS) {
+    console.warn("[embedding] dimension_mismatch", {
+      model,
+      got_dims: embedding.length,
+      expected_dims: EMBEDDING_DIMENSIONS,
+      hint: "embedding inserts will fail against the vector() columns; align model dim with DB + EMBEDDING_DIMENSIONS",
+    });
+  }
 }
 
 export async function extractTextFromImageDataUrl(dataUrl: string): Promise<string> {
