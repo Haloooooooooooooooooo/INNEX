@@ -589,3 +589,35 @@
 - R9 维度坏 → 已修复（migration 010），R10 验证向量召回生效。
 
 下一轮（R11）回填点：重内化后看密度是否降到 ~55-60%、related 占比是否下降、supports/example_of/weak 是否出现（颜色是否变丰富）、节点大小按强度是否可读。
+
+---
+
+## R11（2026-05-31，embedding 主路径判型否决权修复后）
+
+输入：`innex-graph-1780209644812.json`
+
+核心指标：
+- `node_count=20`、`edge_count=28`（密度约 15%）
+- `relationTypeCounts`：`related=22`、`supports=2`、`weak_related=4`
+- `confidenceStats`：high=3 / mid=22 / low=3（分散,不再集中 0.65）
+- `evidence.method`：`embedding=22`、`semantic_seed_llm=2`、`fallback=4`
+- degree 分布：0~6(分散,有区分)
+
+结论：图谱状态 `通过（密度合理,类型多样,误连可控）`。
+
+评价：
+1. LLM 判型否决权生效：边数 165→28，密度 87%→15%，无关点断开。
+2. 关系类型从"全 related"变丰富：supports=2、weak=4 出现。
+3. 多链路生效：embedding/semantic_seed/fallback 均参与。
+4. Badcase：产品经理技术栈 ↔ Java REST API(related 0.63,临界误连)；阈值微调 0.63→0.65 可砍掉。
+
+### R11 Badcase
+
+| Case ID | 样本/边 | 问题类型 | 现象描述 | 证据 | 原因标签 | 修复动作 | 状态 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| R11-C01 | 产品经理技术栈 ↔ Java REST API | 误连 | 仅共享"技术/REST"词面,不应连 | related 0.63 | `graph_wrong_relation` | related 阈值 0.63→0.65 | 待确认 |
+
+### R11 关闭确认
+- R10-C01（过度连接）：**已关闭** — 边数 165→28，密度 87%→15%。
+- R10-C02（类型单一）：**已关闭** — supports=2、weak=4 出现。
+- R8-C02（fallback 主导）：继续关闭 — 主链路占比 79%+。

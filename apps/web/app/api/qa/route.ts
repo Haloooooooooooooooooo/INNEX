@@ -547,6 +547,7 @@ export async function POST(request: Request) {
     let answerStrategy: "answerable" | "partial" | "insufficient" = "insufficient";
     let retrievalStage = "none";
     let graphExpandMeta: Record<string, unknown> | null = null;
+    let graphExpandedNoteIds: Set<string> = new Set();
 
     if (mode === "general") {
       answer = await withRetry(
@@ -856,6 +857,9 @@ export async function POST(request: Request) {
           };
 
           if (gain >= graphExpandMinGain() && expand.noteIds.length > 0) {
+            // Track which notes came purely from graph expansion (for 5C reuse rate metric).
+            const seedSet = new Set(mergedSeedIds);
+            for (const nid of expand.noteIds) { if (!seedSet.has(nid)) graphExpandedNoteIds.add(nid); }
             const scopedTopK = Math.max(topK, 12);
             const scopedThreshold = Math.max(0.5, threshold - 0.08);
             const { data: expandedData, error: expandedErr } = await supabase.rpc("match_note_chunks_in_notes", {
@@ -1000,6 +1004,14 @@ export async function POST(request: Request) {
         excerpt: `${c.content.substring(0, 200)}...`,
         source: "knowledge",
       }));
+      // 5C: graph relation QA reuse rate
+      const grExpandedTotal = graphExpandedNoteIds.size;
+      const grExpandedCited = citations.filter((c) => graphExpandedNoteIds.has(c.note_id)).length;
+      if (graphExpandMeta) {
+        graphExpandMeta.expand_total = grExpandedTotal;
+        graphExpandMeta.expand_cited = grExpandedCited;
+        graphExpandMeta.expand_error_rate = grExpandedTotal > 0 ? 1 - grExpandedCited / grExpandedTotal : 0;
+      }
 
     }
 

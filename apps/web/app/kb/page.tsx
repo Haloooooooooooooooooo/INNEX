@@ -326,15 +326,16 @@ function spreadNodes(nodes: GraphNode[], edges: GraphEdge[], width: number, heig
 }
 
 const FORCE_LAYOUT = {
-  type: "force" as const,
+  type: "radial" as const,
   preventOverlap: true,
-  preventOverlapPadding: 46,
-  nodeSize: 22,
-  nodeSpacing: 34,
-  linkDistance: 240,
-  nodeStrength: -980,
-  edgeStrength: 0.07,
-  gravity: 0.05,
+  preventOverlapPadding: 36,
+  nodeSize: 28,
+  nodeSpacing: 30,
+  maxIteration: 200,
+  unitRadius: 120,
+  linkDistance: 220,
+  sortBy: "degree",
+  sortStrength: 10,
 };
 
 function linkDistanceByRelation(edge: { relationType?: string; type?: string; confidence?: number | null }) {
@@ -722,9 +723,9 @@ export default function KbPage() {
                 size: (() => {
                   const degree = nodeDegreeMap.get(n.id) ?? 0;
                   const norm = maxNodeDegree > 0 ? degree / maxNodeDegree : 0; // 0..1
-                  const baseSize = 14 + Math.round(norm * 26); // 14..40
-                  if (highlightedBySelect) return baseSize + 8 + pulse * 2;
-                  if (highlightedByHover) return baseSize + 4;
+                  const baseSize = 12 + Math.round(norm * 38); // 12..50 (wider range for more differentiation)
+                  if (highlightedBySelect) return baseSize + 10 + pulse * 2;
+                  if (highlightedByHover) return baseSize + 6;
                   return baseSize;
                 })(),
               };

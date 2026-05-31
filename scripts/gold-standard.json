@@ -1,0 +1,21 @@
+{
+  "description": "Gold-standard relation pairs for graph evaluation (5C). Labels use substring matching.",
+  "pairs": [
+    { "source": "Agent设计", "target": "Agent开始干活", "expectedType": "related", "strength": "strong" },
+    { "source": "Agent设计", "target": "企业级AI Agent架构", "expectedType": "related", "strength": "strong" },
+    { "source": "Agent开始干活", "target": "企业级AI Agent架构", "expectedType": "related", "strength": "strong" },
+    { "source": "Prompt AB测试五步法", "target": "Prompt A/B 测试指南", "expectedType": "supports", "strength": "strong" },
+    { "source": "Prompt AB测试五步法", "target": "角色Prompt规范与迭代", "expectedType": "related", "strength": "strong" },
+    { "source": "Prompt A/B 测试指南", "target": "角色Prompt规范与迭代", "expectedType": "related", "strength": "medium" },
+    { "source": "AI意图识别准确率评估", "target": "Agent开始干活的关键一步", "expectedType": "related", "strength": "strong" },
+    { "source": "AI产品经理的PRD模板", "target": "产品经理必懂技术栈", "expectedType": "related", "strength": "medium" },
+    { "source": "面试结构化表达法", "target": "面试官最爱的表达框架", "expectedType": "related", "strength": "strong" },
+    { "source": "面试结构化表达法", "target": "面试通过率很高的自我介绍", "expectedType": "related", "strength": "medium" },
+    { "source": "Vibe Coding工作流", "target": "Vibe Coding六层价值", "expectedType": "related", "strength": "strong" },
+    { "source": "Vibe Coding工作流", "target": "AI产品Vibe路径", "expectedType": "related", "strength": "strong" },
+    { "source": "怎么才能滔滔不绝地讲出逻辑清晰的话", "target": "面试官最爱的表达框架", "expectedType": "weak_related", "strength": "weak" },
+    { "source": "审美无法伪装", "target": "产品经理必懂技术栈", "expectedType": "none", "strength": "none" },
+    { "source": "产品经理必懂技术栈", "target": "实验九—基于Java实现RESTAPI", "expectedType": "none", "strength": "none" },
+    { "source": "企业级AI Agent架构", "target": "实验九—基于Java实现RESTAPI", "expectedType": "none", "strength": "none" }
+  ]
+}
