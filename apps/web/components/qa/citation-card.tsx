@@ -41,7 +41,6 @@ export function CitationCard({
       type="button"
       onClick={handleClick}
       className={`inline-flex max-w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-[11px] text-[--text-secondary] transition hover:border-[--innex-accent] hover:bg-[--innex-accent-dim] hover:text-[--ink] ${toneClass}`}
-      title={excerpt}
     >
       <span className="font-mono text-[10px] text-[--innex-accent]">{index}.</span>
       <span className="max-w-[220px] truncate font-medium text-[--ink]">{title}</span>

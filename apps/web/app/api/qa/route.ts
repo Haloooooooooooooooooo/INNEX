@@ -2,7 +2,16 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { generateCompletion, generateEmbedding } from "@/lib/llm/client";
-import { RAG_QA_SYSTEM, ragQaUserPrompt } from "@/lib/llm/prompts";
+import {
+  QA_ANSWER_SYSTEM,
+  QA_DECISION_SYSTEM,
+  QA_SYNTHESIS_SYSTEM,
+  RAG_QA_SYSTEM,
+  qaAnswerUserPrompt,
+  qaDecisionUserPrompt,
+  qaSynthesisUserPrompt,
+  ragQaUserPrompt,
+} from "@/lib/llm/prompts";
 import { ERROR_CODES, errorBody } from "@/lib/api/error-codes";
 import { withRetry } from "@/lib/llm/resilience";
 import { detectIntent, intentLabel, isRelationCheckQuestion, detectExpansionIntent } from "@/lib/qa/intent";
@@ -307,6 +316,46 @@ function deriveAnswerStrategy(
   return chunkCount >= 3 ? "partial" : "insufficient";
 }
 
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  const candidates: string[] = [text];
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenceMatch?.[1]) candidates.push(fenceMatch[1].trim());
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) candidates.push(text.slice(start, end + 1));
+  for (const c of candidates) {
+    try {
+      const parsed = JSON.parse(c);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
+function qaModelOverride(stage: "decision" | "answer"): string | undefined {
+  const model = stage === "decision" ? process.env.QA_DECISION_MODEL : process.env.QA_ANSWER_MODEL;
+  return model && model.trim() ? model.trim() : undefined;
+}
+
+function dedupeCitations<T extends { source?: "knowledge" | "web"; note_id?: string; title?: string; url?: string }>(
+  citations: T[]
+): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const c of citations || []) {
+    const sourceType = c.source || "knowledge";
+    const key = sourceType === "web" ? `web:${c.url || c.title || ""}` : `knowledge:${c.note_id || c.title || ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+  }
+  return out;
+}
+
 function extractQueryTerms(question: string): string[] {
   const q = question.toLowerCase().trim();
   const stop = new Set([
@@ -548,6 +597,8 @@ export async function POST(request: Request) {
     let retrievalStage = "none";
     let graphExpandMeta: Record<string, unknown> | null = null;
     let graphExpandedNoteIds: Set<string> = new Set();
+    let decisionMeta: Record<string, unknown> | null = null;
+    let synthesisMeta: Record<string, unknown> | null = null;
 
     if (mode === "general") {
       answer = await withRetry(
@@ -584,7 +635,7 @@ export async function POST(request: Request) {
             ),
           { attempts: 2, timeoutMs: 35000 }
         );
-        citations = webItems.map((w, i) => ({
+        citations = dedupeCitations(webItems.map((w, i) => ({
           note_id: `web-${i + 1}`,
           chunk_index: i + 1,
           title: w.title,
@@ -592,7 +643,7 @@ export async function POST(request: Request) {
           source: "web",
           url: w.url,
           fetched_at: w.fetched_at,
-        }));
+        })));
         evidenceLevel = "low";
         evidenceScore = 0.58;
         answerStrategy = "partial";
@@ -975,35 +1026,78 @@ export async function POST(request: Request) {
         chunk_index: c.chunk_index,
       }));
 
-      // Phase 5.6: derive evidence + answer strategy before generating, so partial/
-      // insufficient cases instruct the model to answer with explicit boundaries.
+      // Phase 5.6 baseline evidence score, used by Phase 6 decision/synthesis/answer chain.
       const ev = calcEvidence(fusedChunks);
       evidenceLevel = ev.level;
       evidenceScore = ev.score;
       answerStrategy = deriveAnswerStrategy(ev.level, formattedChunks.length);
+      const historyText = (historyRows || [])
+        .slice(-qaContextRounds())
+        .map((m) => `${m.role === "assistant" ? "AI" : "User"}: ${m.content}`)
+        .join("\n");
+
+      const decisionRaw = await withRetry(
+        () =>
+          generateCompletion(
+            QA_DECISION_SYSTEM,
+            qaDecisionUserPrompt({
+              question,
+              historyText,
+              detectedIntent: intent,
+              expansionIntent,
+              relationCheck,
+              evidenceLevelHint: evidenceLevel,
+              chunkCountHint: formattedChunks.length,
+            }),
+            { useCase: "qa", model: qaModelOverride("decision"), maxOutputTokens: 800 }
+          ),
+        { attempts: 2, timeoutMs: 25000 }
+      );
+      const decisionJson = parseJsonObject(decisionRaw) || {};
+      decisionMeta = decisionJson;
+
+      const synthesisRaw = await withRetry(
+        () =>
+          generateCompletion(
+            QA_SYNTHESIS_SYSTEM,
+            qaSynthesisUserPrompt({
+              question,
+              chunks: formattedChunks.map((c) => ({ index: c.index, content: c.content, title: c.title })),
+            }),
+            { useCase: "qa", model: qaModelOverride("answer"), maxOutputTokens: 1200 }
+          ),
+        { attempts: 2, timeoutMs: 30000 }
+      );
+      const synthesisJson = parseJsonObject(synthesisRaw) || {};
+      synthesisMeta = synthesisJson;
+      const reasoningBrief = typeof synthesisJson.reasoning_brief === "string" ? synthesisJson.reasoning_brief : "";
+      const conflicts = Array.isArray(synthesisJson.conflicts)
+        ? synthesisJson.conflicts.filter((x): x is string => typeof x === "string").slice(0, 4)
+        : [];
 
       answer = await withRetry(
         () =>
           generateCompletion(
-            RAG_QA_SYSTEM,
-            `${buildStructuredInstruction(intentText, relationCheck, answerStrategy)}\n\n${ragQaUserPrompt(
-              `${question}${buildHistoryContext(historyRows || [])}`,
-              formattedChunks
-            )}`,
-            {
-              useCase: "qa",
-            }
+            QA_ANSWER_SYSTEM,
+            qaAnswerUserPrompt({
+              question: `${question}${buildHistoryContext(historyRows || [])}`,
+              reasoningBrief: reasoningBrief || "暂无结构化解题草稿，按证据直接作答。",
+              conflicts,
+              evidenceLevel,
+              chunks: formattedChunks.map((c) => ({ index: c.index, content: c.content, title: c.title })),
+            }),
+            { useCase: "qa", model: qaModelOverride("answer"), maxOutputTokens: 3000 }
           ),
-        { attempts: 2, timeoutMs: 30000 }
+        { attempts: 2, timeoutMs: 35000 }
       );
 
-      citations = formattedChunks.map((c) => ({
+      citations = dedupeCitations(formattedChunks.map((c) => ({
         note_id: c.note_id,
         chunk_index: c.chunk_index,
         title: c.title,
         excerpt: `${c.content.substring(0, 200)}...`,
         source: "knowledge",
-      }));
+      })));
       // 5C: graph relation QA reuse rate
       const grExpandedTotal = graphExpandedNoteIds.size;
       const grExpandedCited = citations.filter((c) => graphExpandedNoteIds.has(c.note_id)).length;
@@ -1044,7 +1138,7 @@ export async function POST(request: Request) {
 
     await supabase.from("qa_sessions").update({ updated_at: new Date().toISOString() }).eq("id", effectiveSessionId).eq("user_id", user.id);
 
-    console.info("[qa] success", { trace_id: traceId, user_id: user.id, session_id: effectiveSessionId, mode, citation_count: citations.length, answer_strategy: answerStrategy, intent_expansion: expansionIntent });
+    console.info("[qa] success", { trace_id: traceId, user_id: user.id, session_id: effectiveSessionId, mode, citation_count: citations.length, answer_strategy: answerStrategy, intent_expansion: expansionIntent, has_decision_meta: Boolean(decisionMeta), has_synthesis_meta: Boolean(synthesisMeta) });
     return NextResponse.json({
       answer,
       citations,
@@ -1065,6 +1159,8 @@ export async function POST(request: Request) {
       retrieval: { topK, threshold },
       retrieval_stage: retrievalStage,
       graph_expand: graphExpandMeta,
+      decision_meta: decisionMeta,
+      synthesis_meta: synthesisMeta,
       filters,
     });
   } catch (err: unknown) {

@@ -1,5 +1,6 @@
 ﻿"use client";
 
+import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { CitationCard } from "@/components/qa/citation-card";
 import type { AiAnswerCitation } from "@/lib/supabase/types";
@@ -14,15 +15,27 @@ interface AnswerDisplayProps {
 }
 
 export function AnswerDisplay({ answer, citations, onSaveToNote, saved, onOpenNote, evidenceLevel = "unknown" }: AnswerDisplayProps) {
+  const displayCitations = useMemo(() => {
+    const seen = new Set<string>();
+    const list: AiAnswerCitation[] = [];
+    for (const c of citations || []) {
+      const key = (c.source || "knowledge") === "web" ? `web:${c.url || c.title}` : `knowledge:${c.note_id || c.title}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      list.push(c);
+    }
+    return list;
+  }, [citations]);
+
   return (
     <div className="rounded-2xl border border-[--border-light] bg-white p-5 shadow-[0_6px_24px_rgba(0,0,0,0.06)]">
       <div className="prose prose-sm max-w-none whitespace-pre-wrap text-[--ink] leading-relaxed">{answer}</div>
 
-      {citations.length > 0 && (
+      {displayCitations.length > 0 && (
         <div className="mt-5 border-t border-[--border-light] pt-4">
           <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[--text-muted]">引用依据</h4>
           <div className="flex flex-wrap gap-1.5">
-            {citations.map((c, i) => (
+            {displayCitations.map((c, i) => (
               <CitationCard
                 key={i}
                 index={i + 1}
