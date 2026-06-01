@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Send, Sparkles, Plus, Zap } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { AnswerDisplay } from "@/components/qa/answer-display";
@@ -38,23 +40,6 @@ function hhmm(iso?: string) {
 
 function noteDisplayId(noteId: string) {
   return `note-${noteId.slice(0, 3).toLowerCase()}`;
-}
-
-function intentToZh(intent?: string) {
-  switch (intent) {
-    case "fact_query":
-      return "事实查询";
-    case "summary":
-      return "总结归纳";
-    case "comparison":
-      return "对比决策";
-    case "action_advice":
-      return "执行建议";
-    case "retrospective":
-      return "复盘反思";
-    default:
-      return intent || "未识别";
-  }
 }
 
 export function QaPage() {
@@ -195,18 +180,6 @@ export function QaPage() {
     }
   }
 
-  async function handleSaveToNote(message: RenderMessage) {
-    if (!message.answerId) return;
-    const noteId = message.citations?.[0]?.note_id || null;
-    await fetch("/api/qa/save", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ answerId: message.answerId, noteId }),
-    });
-
-    setMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, saved: true } : m)));
-  }
-
   async function openNoteDetail(noteId: string) {
     setDetailOpen(true);
     setDetailLoading(true);
@@ -299,69 +272,12 @@ export function QaPage() {
                 </div>
                 <div className="max-w-[860px]">
                   <div className="mb-1 text-[10px] text-[--text-muted]">{msg.at}</div>
-                  <div className="mb-1.5 flex items-center gap-1.5 text-[10px]">
-                    {msg.intent ? (
-                      <span className="rounded border border-[--border-light] bg-[#f5efe7] px-1.5 py-0.5 text-[--text-secondary]">
-                        意图: {intentToZh(msg.intent)}
-                      </span>
-                    ) : null}
-                    {msg.evidenceLevel ? (
-                      <span
-                        className={`rounded px-1.5 py-0.5 ${
-                          msg.evidenceLevel === "high"
-                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                            : msg.evidenceLevel === "low"
-                              ? "bg-amber-50 text-amber-700 border border-amber-200"
-                              : "bg-gray-50 text-gray-600 border border-gray-200"
-                        }`}
-                      >
-                        证据: {msg.evidenceLevel}
-                      </span>
-                    ) : null}
-                    {typeof msg.evidenceScore === "number" ? (
-                      <span className="rounded border border-[--border-light] bg-white px-1.5 py-0.5 text-[--text-secondary]">
-                        证据分: {Math.round(msg.evidenceScore * 100)}%
-                      </span>
-                    ) : null}
-                    {msg.retrieval ? (
-                      <span className="rounded border border-[--border-light] bg-white px-1.5 py-0.5 text-[--text-secondary]">
-                        检索: K={msg.retrieval.topK} / 阈值={msg.retrieval.threshold}
-                      </span>
-                    ) : null}
-                    {msg.filters && (msg.filters.tags.length || msg.filters.source || msg.filters.dateGte || msg.filters.dateLte) ? (
-                      <span className="rounded border border-[--border-light] bg-white px-1.5 py-0.5 text-[--text-secondary]">
-                        过滤已启用
-                      </span>
-                    ) : null}
-                  </div>
                   <AnswerDisplay
                     answer={msg.text}
                     citations={msg.citations || []}
-                    saved={msg.saved ?? !msg.answerId}
-                    onSaveToNote={() => void handleSaveToNote(msg)}
                     onOpenNote={openNoteDetail}
                     evidenceLevel={msg.evidenceLevel}
                   />
-                  {msg.uncertainties?.length ? (
-                    <div className="mt-1 space-y-1">
-                      {msg.uncertainties.map((u, i) => {
-                        const isConflict = u.includes("矛盾");
-                        return (
-                          <div
-                            key={`${msg.id}-u-${i}`}
-                            className={`inline-flex items-center rounded px-2 py-1 text-[11px] ${
-                              isConflict
-                                ? "border border-red-200 bg-red-50 text-red-700"
-                                : "border border-amber-200 bg-amber-50 text-amber-700"
-                            }`}
-                          >
-                            {isConflict ? "冲突证据提醒：" : "不确定项："}
-                            {u}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : null}
                 </div>
               </div>
             )
@@ -376,8 +292,8 @@ export function QaPage() {
 
           {!messages.length && !loading && (
             <div className="mx-auto mt-16 max-w-xl rounded-xl border border-dashed border-[--border-light] bg-[#f8f4ed] p-5 text-sm text-[--text-secondary]">
-              <p className="font-semibold text-[--ink]">问答规则</p>
-              <p className="mt-2">默认模式：`/notes`。可用 `/general` 走通识问答，`/online` 预留中。</p>
+              <p className="font-semibold text-[--ink]">你好，我是你的 AI 助手。</p>
+              <p className="mt-2">你可以直接开始提问，我会基于你的知识库给出尽量准确、清晰的回答。</p>
             </div>
           )}
 
@@ -405,8 +321,11 @@ export function QaPage() {
             </Button>
           </div>
           <div className="mt-1 flex items-center justify-between px-1 text-[11px] text-[--text-muted]">
-            <button className="h-5 w-5 rounded-md border border-[--border-light] bg-[#f6f2ec] text-[12px] leading-none">+</button>
+            <span />
             <span>Shift + Enter 换行，Enter 发送</span>
+          </div>
+          <div className="mt-2 px-1 text-[11px] text-[--text-muted]">
+            AI 回答由模型生成，可能存在误差或遗漏，请结合原始资料与专业判断进行核验。
           </div>
         </div>
       </section>
@@ -439,10 +358,10 @@ export function QaPage() {
 
                   <div className="mt-4">
                     <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-[--innex-accent]">AI 笔记正文</div>
-                    <div className="space-y-2 text-xs leading-relaxed text-[--text-secondary]">
-                      {(noteDetail?.content || "").split("\n").filter(Boolean).slice(0, 6).map((line, i) => (
-                        <p key={`${line}-${i}`} className="rounded-md border border-[--border-light] bg-white p-2.5">{line}</p>
-                      ))}
+                    <div className="rounded-lg border border-[--border-light] bg-white p-3 prose prose-sm max-w-none text-[--text-secondary]">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {noteDetail?.content || "暂无正文"}
+                      </ReactMarkdown>
                     </div>
                   </div>
                 </>

@@ -45,13 +45,14 @@ export function Nav() {
               key={item.href}
               href={item.href}
               className={`flex items-center gap-4 px-[30px] py-5 cursor-pointer transition-all duration-150 border-l-[4px] border-l-transparent relative ${
-                isActive ? "border-l-[--innex-accent]" : "hover:bg-white/[0.045]"
+                isActive ? "border-l-[#ff6a2a]" : "hover:bg-white/[0.06]"
               }`}
               style={
                 isActive
                   ? {
                       background:
-                        "linear-gradient(90deg, rgba(241,90,36,0.23), rgba(44,28,18,0.62), rgba(255,255,255,0.02))",
+                        "linear-gradient(90deg, rgba(255,106,42,0.42), rgba(68,36,20,0.78), rgba(255,255,255,0.03))",
+                      boxShadow: "inset 0 0 0 1px rgba(255,106,42,0.22)",
                     }
                   : undefined
               }
@@ -59,14 +60,14 @@ export function Nav() {
               <span className="flex flex-col">
                 <span
                   className={`text-base font-[650] ${
-                    isActive ? "text-[--text-nav]" : "text-[--text-nav-muted]"
+                    isActive ? "text-[#fff4e8]" : "text-[#d7d2ca]"
                   }`}
                 >
                   {item.cn}
                 </span>
                 <span
                   className={`text-[10px] tracking-[0.04em] font-normal uppercase ${
-                    isActive ? "text-[--text-nav-muted]" : "text-[#77736d]"
+                    isActive ? "text-[#ffd9c3]" : "text-[#b8b1a6]"
                   }`}
                 >
                   {item.en}

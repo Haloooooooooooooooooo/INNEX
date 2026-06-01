@@ -9,6 +9,7 @@ import Link from "next/link";
 
 export function RegisterForm() {
   const { signUp } = useAuth();
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -18,13 +19,24 @@ export function RegisterForm() {
     e.preventDefault();
     setError("");
     setLoading(true);
-    const result = await signUp(email, password);
+    const result = await signUp(email, password, username);
     if (result.error) setError(result.error);
     setLoading(false);
   }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="username">用户名</Label>
+        <Input
+          id="username"
+          type="text"
+          placeholder="请输入用户名"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          required
+        />
+      </div>
       <div className="flex flex-col gap-2">
         <Label htmlFor="email">邮箱</Label>
         <Input

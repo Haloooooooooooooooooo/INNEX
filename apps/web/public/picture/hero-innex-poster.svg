@@ -47,8 +47,6 @@
   <rect x="246" y="24" width="6" height="6" fill="#f15a24"/>
 
   <text x="145" y="103" font-family="Arial Black, Impact, sans-serif" font-size="64" font-weight="900" letter-spacing="-2.6" fill="#f8f4ed" filter="url(#softShadow)">WELCOME,</text>
-  <text x="145" y="158" font-family="Arial Black, Impact, sans-serif" font-size="68" font-weight="900" letter-spacing="-2.6" fill="#f15a24" filter="url(#softShadow)">USER</text>
-
   <text x="44" y="128" font-family="JetBrains Mono, Consolas, monospace" font-size="9" fill="#f8f4ed" opacity="0.08">let input = capture();</text>
   <text x="44" y="150" font-family="JetBrains Mono, Consolas, monospace" font-size="9" fill="#f8f4ed" opacity="0.08">let output = organize();</text>
   <text x="1660" y="132" font-family="JetBrains Mono, Consolas, monospace" font-size="9" fill="#f8f4ed" opacity="0.14">let input = capture();</text>

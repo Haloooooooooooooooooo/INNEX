@@ -2,6 +2,8 @@
 
 import { useState, useEffect, type ReactNode } from "react";
 import { Send } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { CaptureItem, CaptureItemStatus } from "@/lib/supabase/types";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { WaveLoader } from "@/components/shared/wave-loader";
@@ -371,7 +373,11 @@ export function InboxDrawer({
       const res = await fetch("/api/qa", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: asked, sessionId: qaSessionId }),
+        body: JSON.stringify({
+          question: asked,
+          sessionId: qaSessionId,
+          preferredNoteIds: aiNoteId ? [aiNoteId] : [],
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(typeof data?.error === "string" ? data.error : "提问失败");
@@ -552,9 +558,11 @@ export function InboxDrawer({
               ) : (
                 <div key={`${msg.role}-${idx}`} className="mb-4 flex gap-2">
                   <div className="mt-1 h-7 w-7 shrink-0 rounded-full bg-[#c7551c] text-white text-[10px] font-bold flex items-center justify-center">AI</div>
-                  <div className="max-w-[320px] rounded-2xl rounded-tl-md border border-[--border-light] bg-white px-3 py-2.5 text-[12px] text-[--text-secondary] leading-[1.7] whitespace-pre-wrap shadow-sm">
+                  <div className="max-w-[320px] rounded-2xl rounded-tl-md border border-[--border-light] bg-white px-3 py-2.5 text-[12px] text-[--text-secondary] leading-[1.7] shadow-sm">
                     <div className="text-[10px] text-[--text-muted] mb-1">{msg.at}</div>
-                    {msg.text}
+                    <div className="prose prose-sm max-w-none text-[--text-secondary] prose-p:my-1 prose-headings:my-1 prose-ul:my-1 prose-ol:my-1 prose-pre:my-1 prose-code:text-[11px]">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
+                    </div>
                   </div>
                 </div>
               )
@@ -799,9 +807,12 @@ export function InboxDrawer({
                     <p className="text-[11px] font-semibold text-[--text-primary] line-clamp-1">
                       Q: {ans.question}
                     </p>
-                    <p className="text-[11px] text-[--text-secondary] leading-relaxed line-clamp-2">
-                      A: {ans.answer}
-                    </p>
+                    <div className="mt-1 text-[11px] text-[--text-secondary] leading-relaxed line-clamp-2">
+                      <span className="font-semibold">A:</span>{" "}
+                      <span className="prose prose-sm inline max-w-none text-[--text-secondary] prose-p:inline prose-p:my-0">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{ans.answer}</ReactMarkdown>
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>

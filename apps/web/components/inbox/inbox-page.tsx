@@ -5,10 +5,12 @@ import { QuickCapture } from "@/components/inbox/quick-capture";
 import { InboxToolbar } from "@/components/inbox/inbox-toolbar";
 import { InboxTable } from "@/components/inbox/inbox-table";
 import { InboxDrawer } from "@/components/inbox/inbox-drawer";
+import { useAuth } from "@/providers/auth-provider";
 import { useState, useCallback, useEffect } from "react";
 import type { CaptureItem } from "@/lib/supabase/types";
 
 export function InboxPage() {
+  const { user } = useAuth();
   const {
     items,
     counts,
@@ -183,9 +185,27 @@ export function InboxPage() {
     setTimeout(() => setViewToast(null), 2500);
   }, []);
 
+  const displayName = (
+    (user?.user_metadata?.display_name as string | undefined) ||
+    (user?.user_metadata?.full_name as string | undefined) ||
+    user?.email?.split("@")[0] ||
+    "USER"
+  ).trim();
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="hero-strip shrink-0" />
+      <div className="hero-strip shrink-0">
+        <div
+          className="absolute left-[145px] top-[108px] z-[2] max-w-[58vw] text-[68px] leading-none font-black tracking-[-2.6px] uppercase truncate"
+          style={{
+            color: "#f15a24",
+            fontFamily: "Arial Black, Impact, sans-serif",
+            textShadow: "0 8px 4px rgba(0,0,0,0.26)",
+          }}
+        >
+          {displayName}
+        </div>
+      </div>
 
       <div className="px-4 pt-2 pb-2 shrink-0 relative z-[1]">
         <div className="flex items-center gap-2 mb-1.5">

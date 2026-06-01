@@ -356,6 +356,22 @@ function dedupeCitations<T extends { source?: "knowledge" | "web"; note_id?: str
   return out;
 }
 
+function trimNoisyCitations<
+  T extends { source?: "knowledge" | "web"; similarity?: number }
+>(
+  citations: T[],
+  options: { relationCheck: boolean; evidenceLevel: "high" | "low" | "unknown" }
+): T[] {
+  const knowledge = citations.filter((c) => (c.source || "knowledge") === "knowledge");
+  const web = citations.filter((c) => c.source === "web");
+  const sortedKnowledge = [...knowledge].sort((a, b) => Number(b.similarity || 0) - Number(a.similarity || 0));
+  if (options.relationCheck || options.evidenceLevel !== "high") {
+    const thresholded = sortedKnowledge.filter((c) => Number(c.similarity || 0) >= 0.62);
+    return [...thresholded.slice(0, 2), ...web.slice(0, 2)];
+  }
+  return [...sortedKnowledge.slice(0, 5), ...web.slice(0, 3)];
+}
+
 function extractQueryTerms(question: string): string[] {
   const q = question.toLowerCase().trim();
   const stop = new Set([
@@ -518,6 +534,9 @@ export async function POST(request: Request) {
   const topK = typeof body.topK === "number" ? body.topK : defaultRetrieval.topK;
   const threshold = typeof body.threshold === "number" ? body.threshold : defaultRetrieval.threshold;
   const sessionId = typeof body.sessionId === "string" ? body.sessionId : null;
+  const preferredNoteIds = Array.isArray(body.preferredNoteIds)
+    ? body.preferredNoteIds.filter((x: unknown): x is string => typeof x === "string" && looksLikeUuid(x)).slice(0, 8)
+    : [];
 
   if (!question?.trim()) {
     return NextResponse.json(
@@ -535,6 +554,7 @@ export async function POST(request: Request) {
       intent,
       mode,
       session_id: sessionId,
+      preferred_note_count: preferredNoteIds.length,
       filters,
     });
 
@@ -552,7 +572,7 @@ export async function POST(request: Request) {
     } else {
       const { data: existingSession } = await supabase
         .from("qa_sessions")
-        .select("id")
+        .select("id, title")
         .eq("id", effectiveSessionId)
         .eq("user_id", user.id)
         .single();
@@ -561,6 +581,15 @@ export async function POST(request: Request) {
           errorBody(ERROR_CODES.bad_request, "invalid sessionId", traceId),
           { status: 400 }
         );
+      }
+      // Keep sidebar history meaningful: replace default placeholder title
+      // with the first real user question when a new session starts being used.
+      if (!existingSession.title || existingSession.title === "新建对话") {
+        await supabase
+          .from("qa_sessions")
+          .update({ title: question.slice(0, 40) })
+          .eq("id", effectiveSessionId)
+          .eq("user_id", user.id);
       }
     }
 
@@ -590,6 +619,7 @@ export async function POST(request: Request) {
       source?: "knowledge" | "web";
       url?: string;
       fetched_at?: string;
+      similarity?: number;
     }> = [];
     let evidenceLevel: "high" | "low" | "unknown" = "unknown";
     let evidenceScore = 0;
@@ -665,6 +695,34 @@ export async function POST(request: Request) {
 
       let vectorAvailable = true;
 
+      // Stage 0: preferred-note recall (for "ask from this note").
+      // Strategy: prioritize current note first; if evidence is insufficient, continue global pipeline.
+      if (preferredNoteIds.length > 0) {
+        try {
+          const preferredTopK = Math.max(topK, 10);
+          const preferredThreshold = Math.max(0.5, threshold - 0.1);
+          const { data: preferredData, error: preferredErr } = await supabase.rpc("match_note_chunks_in_notes", {
+            query_embedding: questionEmbedding,
+            p_user_id: user.id,
+            p_note_ids: preferredNoteIds,
+            match_threshold: preferredThreshold,
+            match_count: preferredTopK,
+          });
+          if (!preferredErr && preferredData?.length) {
+            chunks = preferredData;
+            retrievalStage = "preferred_note_vector";
+            console.info("[qa] preferred_note_hit", {
+              trace_id: traceId,
+              user_id: user.id,
+              preferred_note_count: preferredNoteIds.length,
+              chunk_count: chunks.length,
+            });
+          }
+        } catch (preferredRecallErr) {
+          console.warn("[qa] preferred_note_failed", { trace_id: traceId, error: String(preferredRecallErr) });
+        }
+      }
+
       // Stage 1: coarse recall on title/summary.
       const candidateNoteIds = await coarseRecallNotes(supabase, user.id, question);
       console.info("[qa] coarse_recall", {
@@ -674,7 +732,10 @@ export async function POST(request: Request) {
       });
 
       // Stage 2: scoped vector recall in candidate notes.
-      if (candidateNoteIds.length > 0) {
+      if (
+        candidateNoteIds.length > 0 &&
+        chunks.length < Math.max(4, Math.floor(topK * 0.8))
+      ) {
         try {
           const scopedTopK = Math.max(topK, 10);
           const scopedThreshold = Math.max(0.55, threshold - 0.08);
@@ -686,8 +747,8 @@ export async function POST(request: Request) {
             match_count: scopedTopK,
           });
           if (!scopedError && scopedData?.length) {
-            chunks = scopedData;
-            retrievalStage = "scoped_vector";
+            chunks = chunks.length ? fuseChunks([...(chunks || []), ...scopedData]) : scopedData;
+            retrievalStage = retrievalStage === "none" ? "scoped_vector" : `${retrievalStage}+scoped_vector`;
             console.info("[qa] scoped_vector_hit", {
               trace_id: traceId,
               user_id: user.id,
@@ -700,7 +761,7 @@ export async function POST(request: Request) {
       }
 
       // Stage 3: global vector fallback.
-      if (!chunks.length) {
+      if (!chunks.length || chunks.length < Math.max(3, Math.floor(topK * 0.7))) {
         try {
           const { data, error } = await supabase.rpc("match_note_chunks", {
             query_embedding: questionEmbedding,
@@ -710,8 +771,8 @@ export async function POST(request: Request) {
           });
           if (error) throw new Error(error.message || "match_note_chunks failed");
           if (data?.length) {
-            chunks = data;
-            retrievalStage = "global_vector";
+            chunks = chunks.length ? fuseChunks([...(chunks || []), ...data]) : data;
+            retrievalStage = retrievalStage === "none" ? "global_vector" : `${retrievalStage}+global_vector`;
           }
         } catch (rpcErr) {
           vectorAvailable = false;
@@ -811,8 +872,11 @@ export async function POST(request: Request) {
       // independent of sparsity. This rescues cases where the current question confidently
       // mis-recalled to off-topic notes instead of staying on the previous topic.
       let followupReuse = false;
+      let followupReferenceActive = false;
+      let followupPrevNoteIds: string[] = [];
       if (!hasFilters(filters) && isFollowupReference(question)) {
         try {
+          followupReferenceActive = true;
           const prevCitations = [...(historyRows || [])]
             .reverse()
             .find((m) => m.role === "assistant" && Array.isArray(m.citations))?.citations as
@@ -825,6 +889,7 @@ export async function POST(request: Request) {
                 .map((c) => c.note_id as string)
             )
           ).slice(0, 6);
+          followupPrevNoteIds = prevNoteIds;
           if (prevNoteIds.length) {
             const reuseTopK = Math.max(topK, 10);
             const reuseThreshold = Math.max(0.48, threshold - 0.12);
@@ -836,11 +901,27 @@ export async function POST(request: Request) {
               match_count: reuseTopK,
             });
             if (!reuseErr && reuseData?.length) {
-              const merged = fuseChunks([...(chunks || []), ...reuseData]);
-              if (merged.length >= (chunks?.length || 0)) {
-                chunks = merged;
+              // Strong anchor for explicit follow-up: prefer previous cited-note scope first.
+              if (reuseData.length >= 2) {
+                chunks = reuseData;
                 followupReuse = true;
-                retrievalStage = retrievalStage === "none" ? "followup_reuse" : `${retrievalStage}+followup_reuse`;
+                retrievalStage = "followup_locked";
+                console.info("[qa] followup_locked", {
+                  trace_id: traceId,
+                  user_id: user.id,
+                  reused_note_count: prevNoteIds.length,
+                  reuse_chunk_count: reuseData.length,
+                });
+              } else {
+                const merged = fuseChunks([...(chunks || []), ...reuseData]);
+                if (merged.length >= (chunks?.length || 0)) {
+                  chunks = merged;
+                  followupReuse = true;
+                  retrievalStage = retrievalStage === "none" ? "followup_reuse" : `${retrievalStage}+followup_reuse`;
+                }
+              }
+              if (followupReuse) {
+                followupReuse = true;
                 console.info("[qa] followup_reuse_hit", {
                   trace_id: traceId,
                   user_id: user.id,
@@ -882,7 +963,13 @@ export async function POST(request: Request) {
                 )
               ).slice(0, 6)
             : [];
-          const mergedSeedIds = Array.from(new Set([...seedNoteIds, ...previousNoteIds])).slice(0, 12);
+          const mergedSeedIds = Array.from(
+            new Set(
+              followupReferenceActive && followupPrevNoteIds.length
+                ? [...followupPrevNoteIds, ...seedNoteIds]
+                : [...seedNoteIds, ...previousNoteIds]
+            )
+          ).slice(0, 12);
           const relationPriority = relationPriorityByExpansion(expansionIntent, intent);
           const expand = await expandNoteIdsByGraph(
             supabase,
@@ -1024,6 +1111,7 @@ export async function POST(request: Request) {
         title: c.note_title || "未命名笔记",
         note_id: c.note_id,
         chunk_index: c.chunk_index,
+        similarity: Number(c.similarity || 0),
       }));
 
       // Phase 5.6 baseline evidence score, used by Phase 6 decision/synthesis/answer chain.
@@ -1097,7 +1185,9 @@ export async function POST(request: Request) {
         title: c.title,
         excerpt: `${c.content.substring(0, 200)}...`,
         source: "knowledge",
+        similarity: c.similarity,
       })));
+      citations = trimNoisyCitations(citations, { relationCheck, evidenceLevel });
       // 5C: graph relation QA reuse rate
       const grExpandedTotal = graphExpandedNoteIds.size;
       const grExpandedCited = citations.filter((c) => graphExpandedNoteIds.has(c.note_id)).length;
