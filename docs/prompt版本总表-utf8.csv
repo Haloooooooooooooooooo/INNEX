@@ -1,0 +1,7 @@
+﻿版本编号,日期,模块,Prompt名称,版本类型,改动目标,改动前摘要,改动后摘要,关键改动点,测试集,通过率,主要提升,主要退化,新增坏例,结论,关联坏例,后续动作
+P-20260608-PARSE-BASE,2026/6/8,Parse,PARSE_TITLE_PROMPT / PARSE_SUMMARY_PROMPT / PARSE_TAGS_PROMPT,基线,建立 Parse Prompt 基线,当前线上轻解析 Prompt,未改动,短标题/短摘要/JSON标签,待补,待补,待补,待补,待补,基线,,后续对比解析质量
+P-20260608-INTERNALIZE-BASE,2026/6/8,Internalize,INTERNALIZE_SYSTEM / internalizeUserPrompt / CONCEPT_EXTRACTION,基线,建立内化 Prompt 基线,当前线上内化 Prompt,未改动,五段结构/事实推断分层/概念抽取,待补,待补,待补,待补,待补,基线,,后续对比内化质量
+P-20260608-RELATION-BASE,2026/6/8,Graph Relation,relation-classifier buildSystemPrompt / buildUserPrompt,基线,建立关系判型 Prompt 基线,当前线上关系判型 Prompt,未改动,关系类型定义/泛词降权/JSON输出/置信度校准,待补,待补,待补,待补,待补,基线,,后续对比误连漏连
+P-20260608-QA-DECISION-BASE,2026/6/8,QA Decision,QA_DECISION_SYSTEM / qaDecisionUserPrompt,基线,建立 QA 决策 Prompt 基线,当前线上决策 Prompt,未改动,意图/续问/扩图/保守策略 JSON,QA 7题回归 + Q5/Q7 badcase,待补,待补,待补,待补,基线,Q5;Q7,后续对比决策准确率
+P-20260608-QA-SYNTHESIS-BASE,2026/6/8,QA Synthesis,QA_SYNTHESIS_SYSTEM / qaSynthesisUserPrompt,基线,建立证据加工 Prompt 基线,当前线上证据加工 Prompt,未改动,去重事实/逻辑梳理/冲突检查,QA 7题回归 + Q5/Q7 badcase,待补,待补,待补,待补,基线,Q5;Q7,后续对比证据加工质量
+P-20260608-QA-ANSWER-BASE,2026/6/8,QA Answer,QA_ANSWER_SYSTEM / qaAnswerUserPrompt,基线,建立回答 Prompt 基线,当前线上回答 Prompt,未改动,自然表达/不暴露检索参数/忠于证据/边界说明,QA 7题回归 + Q5/Q7 badcase,待补,待补,待补,待补,基线,Q5;Q7,后续对比回答质量
