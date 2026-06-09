@@ -5,7 +5,6 @@ import { parseContent } from "@/lib/parse/generator";
 import { PARSE_RULES } from "@/lib/parse/config";
 import { analyzeImageForSummaryAndTags, extractTextFromImageDataUrl } from "@/lib/llm/client";
 import { extractDocumentTextDetailed } from "@/lib/parse/document-extractor";
-import { PDFParse } from "pdf-parse";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -1404,7 +1403,8 @@ function evaluateExtractedTextQuality(text: string): { ok: boolean; reason: stri
 
 async function tryPdfOcrFallback(file: File, notes: string[]): Promise<string | null> {
   try {
-    ensurePdfParseWorkerConfigured(notes);
+    const PDFParse = await loadPdfParse(notes);
+    ensurePdfParseWorkerConfigured(PDFParse, notes);
     const bytes = Buffer.from(await file.arrayBuffer());
     const parser = new PDFParse({ data: bytes });
     try {
@@ -1451,7 +1451,31 @@ async function tryPdfOcrFallback(file: File, notes: string[]): Promise<string | 
 }
 
 let pdfParseWorkerConfigured = false;
-function ensurePdfParseWorkerConfigured(notes: string[]) {
+type PdfParseModule = {
+  new (input: { data: Buffer }): {
+    getScreenshot(input: Record<string, unknown>): Promise<unknown>;
+    destroy(): Promise<void>;
+  };
+  setWorker(workerSrc: string): void;
+};
+
+let pdfParseModulePromise: Promise<PdfParseModule> | null = null;
+
+async function loadPdfParse(notes: string[]): Promise<PdfParseModule> {
+  if (!pdfParseModulePromise) {
+    pdfParseModulePromise = import("pdf-parse").then((mod) => mod.PDFParse as PdfParseModule);
+  }
+  try {
+    return await pdfParseModulePromise;
+  } catch (err) {
+    pdfParseModulePromise = null;
+    const msg = err instanceof Error ? err.message : "unknown";
+    notes.push(`pdf_ocr_module_load_failed:${msg.slice(0, 120)}`);
+    throw err;
+  }
+}
+
+function ensurePdfParseWorkerConfigured(PDFParse: PdfParseModule, notes: string[]) {
   if (pdfParseWorkerConfigured) return;
   try {
     const envWorker = process.env.PDF_OCR_WORKER_URL?.trim();
