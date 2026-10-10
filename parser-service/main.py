@@ -1,36 +1,15 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import JSONResponse
-from docling.document_converter import DocumentConverter
 import tempfile
 import os
-import threading
 import pypdfium2 as pdfium
 
 app = FastAPI(title="INNEX Parser Service", version="0.1.0")
-_converter: DocumentConverter | None = None
-_init_lock = threading.Lock()
-_init_error: str | None = None
-
-
-def get_converter() -> DocumentConverter:
-    global _converter, _init_error
-    if _converter is not None:
-        return _converter
-    with _init_lock:
-        if _converter is not None:
-            return _converter
-        try:
-            _converter = DocumentConverter()
-            _init_error = None
-            return _converter
-        except Exception as e:
-            _init_error = str(e)
-            raise
 
 
 @app.get("/health")
 def health():
-    return {"ok": True, "ready": _converter is not None, "init_error": _init_error}
+    return {"ok": True, "ready": True, "parser": "pdfium_text_only"}
 
 
 @app.post("/parse/pdf")
@@ -65,27 +44,20 @@ async def parse_pdf(file: UploadFile = File(...), ocr: int = Form(0)):
                 "chars": len(text),
             }
 
-        converter = get_converter()
-        result = converter.convert(tmp_path)
-        doc = result.document
-        text = doc.export_to_markdown() or ""
-        text = text.strip()
-        if not text:
+        if ocr == 1:
             return JSONResponse(
-                status_code=422,
-                content={"ok": False, "error_code": "PDF_PARSE_EMPTY_TEXT", "detail": "docling_empty_text"},
+                status_code=501,
+                content={
+                    "ok": False,
+                    "error_code": "PDF_PARSE_DOCLING_DISABLED",
+                    "detail": "Docling/OCR parsing is disabled on the lightweight Render deployment.",
+                },
             )
 
-        return {
-            "ok": True,
-            "source": "docling",
-            "text": text,
-            "chars": len(text),
-        }
     except Exception as e:
         return JSONResponse(
             status_code=500,
-            content={"ok": False, "error_code": "PDF_PARSE_DOCILING_FAILED", "detail": str(e)[:300]},
+            content={"ok": False, "error_code": "PDF_PARSE_FAILED", "detail": str(e)[:300]},
         )
     finally:
         if tmp_path and os.path.exists(tmp_path):
